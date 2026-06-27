@@ -1,0 +1,362 @@
+﻿@page "/applications"
+@using JobAssistant.Web.Models
+@using JobAssistant.Web.Services
+@inject ApplicationService AppService
+
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+    <h2>Applications</h2>
+    <button class="chat-send-btn" @onclick="() => showAddDialog = true">Add application</button>
+</div>
+
+@if (stats != null)
+{
+    <div class="grid-2" style="grid-template-columns: repeat(4, 1fr);">
+        <div class="stat-card">
+            <div class="stat-label">TOTAL APPLICATIONS</div>
+            <div class="stat-value">@stats.TotalApplications</div>
+            <div class="stat-sub">+@stats.AppliedThisMonth this month</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">ACTIVE INTERVIEWS</div>
+            <div class="stat-value">@stats.ActiveInterviews</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">RESPONSE RATE</div>
+            <div class="stat-value">@stats.ResponseRate%</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">REJECTED</div>
+            <div class="stat-value">@stats.RejectedThisMonth</div>
+            <div class="stat-sub">this month</div>
+        </div>
+    </div>
+}
+
+<div style="margin: 20px 0; display: flex; gap: 8px;">
+    @foreach (var filter in new[] { "All", "Active", "Interview", "Offer", "Rejected" })
+    {
+        <button class="chat-suggestion-chip @(activeFilter == filter ? "active" : "")" 
+                style="@(activeFilter == filter ? "background: #252535; color: #fff;" : "")"
+                @onclick="() => SetFilter(filter)">
+            @filter
+        </button>
+    }
+</div>
+
+@if (isLoading)
+{
+    <div class="loading">Loading applications...</div>
+}
+else
+{
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Company / Position</th>
+                <th>Source</th>
+                <th>Status</th>
+                <th>Applied Date</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var app in filteredApps)
+            {
+                <tr>
+                    <td>
+                        <div style="font-weight: 500;">@app.CompanyName</div>
+                        <div style="font-size: 11px; color: #888890;">@app.Position</div>
+                    </td>
+                    <td>@app.Source</td>
+                    <td><span class="chip @GetStatusClass(app.Status)">@GetStatusLabel(app.Status)</span></td>
+                    <td>@(app.AppliedAt?.ToString("MMM dd, yyyy") ?? "-")</td>
+                    <td><button class="btn-cancel" style="padding: 4px 8px; font-size: 11px;" @onclick="() => ViewDetail(app.Id)">View</button></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<div class="chat-section" style="margin-top: 24px;">
+    <div class="chat-header">
+        <span>💬 Ask about your data</span>
+        <span style="font-size: 10px; background: #2a1f0a; color: #fbbf24; padding: 2px 6px; border-radius: 4px;">AI Powered</span>
+    </div>
+    
+    <div class="chat-suggestions">
+        <button class="chat-suggestion-chip" @onclick="@(() => QuickAsk("Which companies haven't replied?"))">Unreplied companies?</button>
+        <button class="chat-suggestion-chip" @onclick="@(() => QuickAsk("My response rate by source?"))">Response rate by source?</button>
+        <button class="chat-suggestion-chip" @onclick="@(() => QuickAsk("How many interviews this month?"))">Interviews this month?</button>
+    </div>
+
+    <div class="chat-messages">
+        @foreach (var msg in chatMessages)
+        {
+            if (msg.Role == "user")
+            {
+                <div class="chat-msg-user" dir="auto">@msg.TextContent</div>
+            }
+            else
+            {
+                <div class="chat-msg-ai">
+                    <div class="chat-msg-ai-text" dir="auto">@msg.TextContent</div>
+                    @if (msg.Table != null && msg.Table.Rows.Any())
+                    {
+                        <table class="chat-mini-table" dir="ltr">
+                            <thead>
+                                <tr>
+                                    @foreach (var col in msg.Table.Columns)
+                                    {
+                                        <th>@col</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in msg.Table.Rows)
+                                {
+                                    <tr>
+                                        @foreach (var cell in row)
+                                        {
+                                            <td>@cell</td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            }
+        }
+        @if (isChatLoading)
+        {
+            <div class="chat-loading-dots">...</div>
+        }
+    </div>
+
+    <div class="chat-input-row">
+        <input class="chat-input" @bind="chatInput" @bind:event="oninput" @onkeydown="HandleChatKey" placeholder="Ask anything about your applications..." dir="auto" />
+        <button class="chat-send-btn" @onclick="SendChatMessage" disabled="@(isChatLoading || string.IsNullOrWhiteSpace(chatInput))">Send</button>
+    </div>
+</div>
+
+@if (showAddDialog)
+{
+    <div class="modal-overlay">
+        <div class="modal">
+            <div class="modal-title">Add New Application</div>
+            <div class="form-group">
+                <label class="form-label">Company Name</label>
+                <input class="form-input" @bind="formModel.CompanyName" />
+            </div>
+            <div class="form-group">
+                <label class="form-label">Position</label>
+                <input class="form-input" @bind="formModel.Position" />
+            </div>
+            <div class="form-group">
+                <label class="form-label">Source</label>
+                <select class="form-select" @bind="formModel.Source">
+                    <option value="LinkedIn">LinkedIn</option>
+                    <option value="Himalayas">Himalayas</option>
+                    <option value="Direct">Direct</option>
+                    <option value="Referral">Referral</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Status</label>
+                <select class="form-select" @bind="formModel.Status">
+                    <option value="Saved">Saved</option>
+                    <option value="Applied">Applied</option>
+                    <option value="HRInterview">HR Interview</option>
+                    <option value="TechnicalInterview">Technical Interview</option>
+                    <option value="FinalInterview">Final Interview</option>
+                    <option value="Offer">Offer</option>
+                    <option value="Rejected">Rejected</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Applied Date</label>
+                <input type="date" class="form-input" @bind="addDateOnly" />
+            </div>
+            <div class="modal-actions">
+                <button class="btn-cancel" @onclick="() => showAddDialog = false">Cancel</button>
+                <button class="chat-send-btn" @onclick="SaveApplication">Save</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (viewingDetail != null)
+{
+    <div class="modal-overlay">
+        <div class="modal">
+            <div class="modal-title">@viewingDetail.CompanyName - @viewingDetail.Position</div>
+            <div class="form-group">
+                <label class="form-label">Update Status</label>
+                <select class="form-select" value="@viewingDetail.Status" @onchange="UpdateStatus">
+                    <option value="Saved">Saved</option>
+                    <option value="Applied">Applied</option>
+                    <option value="HRInterview">HR Interview</option>
+                    <option value="TechnicalInterview">Technical Interview</option>
+                    <option value="FinalInterview">Final Interview</option>
+                    <option value="Offer">Offer</option>
+                    <option value="Rejected">Rejected</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Source: @viewingDetail.Source</label>
+                <label class="form-label">Applied: @(viewingDetail.AppliedAt?.ToString("yyyy-MM-dd") ?? "-")</label>
+                <label class="form-label">Notes:</label>
+                <div style="font-size: 12px; color: #e8e8ea; background: #0d0d0f; padding: 10px; border-radius: 6px;">
+                    @(string.IsNullOrEmpty(viewingDetail.Notes) ? "No notes." : viewingDetail.Notes)
+                </div>
+            </div>
+            <div class="modal-actions" style="justify-content: space-between;">
+                <button class="btn-cancel" style="color: #f87171; border-color: #4a1515;" @onclick="DeleteCurrent">Delete</button>
+                <button class="btn-cancel" @onclick="() => viewingDetail = null">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    List<ApplicationSummary> applications = new();
+    DashboardStats? stats;
+    string activeFilter = "All";
+    bool isLoading = true;
+
+    List<(string Role, string TextContent, DataTable? Table)> chatMessages = new();
+    string chatInput = "";
+    bool isChatLoading = false;
+
+    bool showAddDialog = false;
+    
+    // کلاس جدید برای بایندینگ فرم بدون خطای init-only
+    class ApplicationFormModel
+    {
+        public string CompanyName { get; set; } = "";
+        public string Position { get; set; } = "";
+        public string Source { get; set; } = "LinkedIn";
+        public string Status { get; set; } = "Applied";
+    }
+
+    ApplicationFormModel formModel = new();
+    DateTime addDateOnly = DateTime.Today;
+
+    ApplicationDetail? viewingDetail = null;
+
+    IEnumerable<ApplicationSummary> filteredApps => activeFilter switch
+    {
+        "Active" => applications.Where(a => a.Status != "Rejected" && a.Status != "Offer" && a.Status != "Saved"),
+        "Interview" => applications.Where(a => a.Status.Contains("Interview")),
+        "Offer" => applications.Where(a => a.Status == "Offer"),
+        "Rejected" => applications.Where(a => a.Status == "Rejected"),
+        _ => applications
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    async Task LoadData()
+    {
+        isLoading = true;
+        applications = await AppService.GetAllAsync();
+        stats = await AppService.GetStatsAsync();
+        isLoading = false;
+    }
+
+    void SetFilter(string filter) => activeFilter = filter;
+
+    async Task SaveApplication()
+    {
+        var req = new CreateApplicationRequest(
+            formModel.CompanyName,
+            formModel.Position,
+            null,
+            formModel.Source,
+            null,
+            formModel.Status,
+            null,
+            null,
+            new DateTimeOffset(addDateOnly.ToUniversalTime(), TimeSpan.Zero)
+        );
+
+        await AppService.CreateAsync(req);
+        
+        showAddDialog = false;
+        formModel = new();
+        addDateOnly = DateTime.Today;
+        
+        await LoadData();
+    }
+
+    async Task ViewDetail(Guid id)
+    {
+        viewingDetail = await AppService.GetByIdAsync(id);
+    }
+
+    async Task UpdateStatus(ChangeEventArgs e)
+    {
+        if (viewingDetail == null || e.Value == null) return;
+        var newStatus = e.Value.ToString()!;
+        await AppService.UpdateAsync(viewingDetail.Id, new UpdateApplicationRequest(null, null, null, null, null, newStatus, null, null, null));
+        await LoadData();
+        viewingDetail = viewingDetail with { Status = newStatus };
+    }
+
+    async Task DeleteCurrent()
+    {
+        if (viewingDetail == null) return;
+        await AppService.DeleteAsync(viewingDetail.Id);
+        viewingDetail = null;
+        await LoadData();
+    }
+
+    async Task SendChatMessage()
+    {
+        if (string.IsNullOrWhiteSpace(chatInput) || isChatLoading) return;
+        var question = chatInput.Trim();
+        chatInput = "";
+        chatMessages.Add(("user", question, null));
+        isChatLoading = true;
+        StateHasChanged();
+
+        var history = chatMessages.SkipLast(1)
+            .Select(m => new DataChatMessage(m.Role, m.TextContent)).ToList();
+
+        try 
+        {
+            var response = await AppService.ChatAsync(new DataChatRequest(question, history));
+            if (response != null) chatMessages.Add(("assistant", response.TextAnswer, response.Table));
+        }
+        catch { chatMessages.Add(("assistant", "Error connecting to AI.", null)); }
+
+        isChatLoading = false;
+    }
+
+    async Task QuickAsk(string q)
+    {
+        chatInput = q;
+        await SendChatMessage();
+    }
+
+    async Task HandleChatKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey) await SendChatMessage();
+    }
+
+    string GetStatusClass(string status) => status switch
+    {
+        "Saved" => "badge-saved", "Applied" => "badge-applied", "HRInterview" => "badge-hr",
+        "TechnicalInterview" => "badge-tech", "FinalInterview" => "badge-final",
+        "Offer" => "badge-offer", "Rejected" => "badge-rejected", _ => "badge-saved"
+    };
+
+    string GetStatusLabel(string status) => status switch
+    {
+        "HRInterview" => "HR Interview", "TechnicalInterview" => "Technical",
+        "FinalInterview" => "Final", _ => status
+    };
+}

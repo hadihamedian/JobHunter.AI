@@ -1,5 +1,6 @@
 using JobAssistant.Api.Models;
 using JobAssistant.Api.Services;
+using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,6 +14,13 @@ builder.Services.AddCors(options =>
             .AllowAnyHeader()
             .AllowAnyMethod());
 });
+
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+                       ?? "Host=localhost;Database=jobassistant;Username=postgres;Password=postgres";
+var dataSource = NpgsqlDataSource.Create(connectionString);
+builder.Services.AddSingleton(dataSource);
+builder.Services.AddScoped<ApplicationRepository>();
+builder.Services.AddScoped<DataChatService>();
 
 var app = builder.Build();
 app.UseCors();
@@ -36,5 +44,42 @@ app.MapPost("/api/chat", async (ChatRequest request, CareerChatService chatServi
     var response = await chatService.ChatAsync(request);
     return Results.Ok(response);
 });
+
+var apps = app.MapGroup("/api/applications");
+
+apps.MapGet("/", async (ApplicationRepository repo, string? status = null) =>
+    Results.Ok(await repo.GetAllAsync(status)));
+
+apps.MapGet("/stats", async (ApplicationRepository repo) =>
+    Results.Ok(await repo.GetStatsAsync()));
+
+apps.MapGet("/{id:guid}", async (Guid id, ApplicationRepository repo) =>
+{
+    var appData = await repo.GetByIdAsync(id);
+    return appData is null ? Results.NotFound() : Results.Ok(appData);
+});
+
+apps.MapPost("/", async (CreateApplicationRequest req, ApplicationRepository repo) =>
+{
+    var id = await repo.CreateAsync(req);
+    return Results.Created($"/api/applications/{id}", new { id });
+});
+
+apps.MapPatch("/{id:guid}", async (Guid id, UpdateApplicationRequest req, ApplicationRepository repo) =>
+{
+    var ok = await repo.UpdateAsync(id, req);
+    return ok ? Results.NoContent() : Results.NotFound();
+});
+
+apps.MapDelete("/{id:guid}", async (Guid id, ApplicationRepository repo) =>
+{
+    var ok = await repo.DeleteAsync(id);
+    return ok ? Results.NoContent() : Results.NotFound();
+});
+
+apps.MapPost("/chat", async (DataChatRequest req, DataChatService chatSvc) =>
+    Results.Ok(await chatSvc.ChatAsync(req)));
+
+await ApplicationRepository.InitDbAsync(dataSource);
 
 app.Run();

@@ -1,9 +1,16 @@
 ﻿@inherits LayoutComponentBase
 
 <div class="container">
-    <div class="logo">
-        <div class="logo-dot"></div>
-        Job Assistant
-    </div>
+    <header class="header-nav">
+        <div class="logo">
+            <div class="logo-dot"></div>
+            Job Assistant
+        </div>
+        <nav class="top-nav">
+            <NavLink class="nav-btn" href="" Match="NavLinkMatch.All">Analyzer</NavLink>
+            <NavLink class="nav-btn" href="/applications">Dashboard</NavLink>
+        </nav>
+    </header>
+    
     @Body
 </div>
