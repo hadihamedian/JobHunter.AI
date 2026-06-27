@@ -5,6 +5,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddHttpClient();
 builder.Services.AddScoped<AiAnalyzerService>();
+builder.Services.AddScoped<CareerChatService>(); // <-- اضافه شد
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
@@ -24,6 +25,16 @@ app.MapPost("/api/analyze", async (AnalyzeRequest request, AiAnalyzerService ana
 
     var result = await analyzer.AnalyzeAsync(request.ResumeContent, request.JobDescription);
     return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
+});
+
+// <-- Endpoint جدید اضافه شد
+app.MapPost("/api/chat", async (ChatRequest request, CareerChatService chatService) =>
+{
+    if (string.IsNullOrWhiteSpace(request.UserMessage))
+        return Results.BadRequest("Message is required.");
+
+    var response = await chatService.ChatAsync(request);
+    return Results.Ok(response);
 });
 
 app.Run();

@@ -1,5 +1,6 @@
 ﻿@page "/"
 @inject HttpClient Http
+@using Microsoft.AspNetCore.Components.Web
 
 <div class="grid-2">
     <div class="panel">
@@ -68,6 +69,57 @@ else if (result != null)
             }
         </div>
     </div>
+
+    <div class="chat-panel">
+        <div class="panel-title">💬 Ask about this job</div>
+        
+        <div class="chat-messages" id="chat-messages">
+            @if (chatHistory.Count == 0)
+            {
+                <div class="chat-empty">
+                    Ask me anything about this job and your resume...
+                </div>
+                <div class="chat-suggestions">
+                    <button class="chat-suggestion-btn" @onclick='() => QuickAsk("What should I learn first to close my skill gaps?")'>
+                        What should I learn first?
+                    </button>
+                    <button class="chat-suggestion-btn" @onclick='() => QuickAsk("Why is my ATS score not higher?")'>
+                        Why is my score not higher?
+                    </button>
+                    <button class="chat-suggestion-btn" @onclick='() => QuickAsk("Am I ready to apply for this job?")'>
+                        Am I ready to apply?
+                    </button>
+                </div>
+            }
+            
+            @foreach (var msg in chatHistory)
+            {
+                <div class="chat-msg @(msg.Role == "user" ? "chat-msg-user" : "chat-msg-assistant")" dir="auto">
+                    @msg.Content
+                </div>
+            }
+            
+            @if (isChatLoading)
+            {
+                <div class="chat-msg chat-msg-assistant chat-loading">
+                    <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
+                </div>
+            }
+        </div>
+        
+        <div class="chat-input-row">
+            <input 
+                class="chat-input" 
+                placeholder="Ask about this job..." 
+                @bind="currentMessage"
+                @bind:event="oninput"
+                @onkeydown="HandleKeyDown"
+                dir="auto"/>
+            <button class="chat-send-btn" @onclick="SendMessage" disabled="@(isChatLoading || string.IsNullOrWhiteSpace(currentMessage))">
+                Send
+            </button>
+        </div>
+    </div>
 }
 
 @code {
@@ -76,6 +128,11 @@ else if (result != null)
     private AnalyzeResult? result = null;
     private bool isLoading = false;
     private string? errorMessage = null;
+
+    // Chat State
+    List<ChatMessage> chatHistory = new();
+    string currentMessage = "";
+    bool isChatLoading = false;
 
     private async Task AnalyzeAsync()
     {
@@ -88,6 +145,7 @@ else if (result != null)
         isLoading = true;
         errorMessage = null;
         result = null;
+        chatHistory.Clear(); // ریست کردن چت با آنالیز جدید
 
         try
         {
@@ -113,6 +171,61 @@ else if (result != null)
         }
     }
 
+    async Task SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(currentMessage) || isChatLoading) return;
+
+        var userMsg = currentMessage.Trim();
+        currentMessage = "";
+        
+        chatHistory.Add(new ChatMessage("user", userMsg));
+        isChatLoading = true;
+        StateHasChanged();
+
+        var request = new
+        {
+            ResumeContent = resumeContent,
+            JobDescription = jobDescription,
+            AnalysisSummary = BuildAnalysisSummary(),
+            History = chatHistory.SkipLast(1).ToList(),
+            UserMessage = userMsg
+        };
+
+        var response = await Http.PostAsJsonAsync("/api/chat", request);
+        if (response.IsSuccessStatusCode)
+        {
+            var chatRes = await response.Content.ReadFromJsonAsync<ChatResponse>();
+            chatHistory.Add(new ChatMessage("assistant", chatRes?.Reply ?? ""));
+        }
+        else
+        {
+            chatHistory.Add(new ChatMessage("assistant", "Sorry, an error occurred communicating with the AI."));
+        }
+        
+        isChatLoading = false;
+    }
+
+    string BuildAnalysisSummary()
+    {
+        if (result == null) return "";
+        return $"ATS Score: {result.AtsScore}/100. " +
+               $"Matching skills: {string.Join(", ", result.MatchingSkills ?? new())}. " +
+               $"Missing skills: {string.Join(", ", result.MissingSkills ?? new())}. " +
+               $"Critical gaps: {string.Join(", ", result.CriticalMissingSkills ?? new())}.";
+    }
+
+    async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await SendMessage();
+    }
+
+    async Task QuickAsk(string question)
+    {
+        currentMessage = question;
+        await SendMessage();
+    }
+
     public record AnalyzeResult(
         int AtsScore,
         List<string> MatchingSkills,
@@ -120,4 +233,7 @@ else if (result != null)
         List<string> CriticalMissingSkills,
         List<string> Suggestions
     );
+
+    public record ChatMessage(string Role, string Content);
+    public record ChatResponse(string Reply);
 }
