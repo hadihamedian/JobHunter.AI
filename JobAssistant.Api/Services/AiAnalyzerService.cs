@@ -4,17 +4,13 @@ using JobAssistant.Api.Models;
 
 namespace JobAssistant.Api.Services;
 
-public class AiAnalyzerService
+public class AiAnalyzerService(HttpClient httpClient, IConfiguration configuration)
 {
-    private readonly HttpClient _httpClient;
-
-    public AiAnalyzerService(HttpClient httpClient)
-    {
-        _httpClient = httpClient;
-    }
-
     public async Task<AnalyzeResult?> AnalyzeAsync(string resume, string jobDesc)
     {
+        var url = configuration["Ollama:Url"] ?? "http://localhost:11434/api/generate";
+        var model = configuration["Ollama:Model"] ?? "llama3.2";
+        
         var prompt = $@"You are an ATS (Applicant Tracking System) analyzer.
 Analyze the resume against the job description and return ONLY a JSON object.
 
@@ -38,13 +34,17 @@ Return ONLY this JSON, no explanation, no markdown:
 
         var requestPayload = new
         {
-            model = "qwen2.5-coder:7b",
+            model = model,
             prompt = prompt,
             stream = false,
-            format = "json"
+            format = "json",
+            options = new 
+            { 
+                temperature = 0 
+            }
         };
 
-        var response = await _httpClient.PostAsJsonAsync("http://localhost:11434/api/generate", requestPayload);
+        var response = await httpClient.PostAsJsonAsync(url, requestPayload);
         response.EnsureSuccessStatusCode();
 
         var jsonResponse = await response.Content.ReadFromJsonAsync<OllamaResponse>();
