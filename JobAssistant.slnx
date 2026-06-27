@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="JobAssistant.Api/JobAssistant.Api.csproj" />
+  <Project Path="JobAssistant.Web/JobAssistant.Web.csproj" />
+</Solution>
