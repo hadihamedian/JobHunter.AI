@@ -1,7 +1,123 @@
 ﻿@page "/"
+@inject HttpClient Http
 
-<PageTitle>Home</PageTitle>
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-title">Job Description</div>
+        <textarea @bind="jobDescription" placeholder="Paste job description here..."></textarea>
+    </div>
+    <div class="panel">
+        <div class="panel-title">Your Resume</div>
+        <textarea @bind="resumeContent" placeholder="Paste your resume content here..."></textarea>
+    </div>
+</div>
 
-<h1>Hello, world!</h1>
+<button class="btn-analyze" @onclick="AnalyzeAsync" disabled="@isLoading">
+    @(isLoading ? "Analyzing..." : "Analyze now")
+</button>
 
-Welcome to your new app.
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="error">@errorMessage</div>
+}
+
+@if (isLoading)
+{
+    <div class="loading">Analyzing resume against job description via Ollama...</div>
+}
+else if (result != null)
+{
+    <div class="result-panel">
+        <div>
+            <div class="score">@result.AtsScore%</div>
+            <div class="score-label">ATS MATCH SCORE</div>
+        </div>
+
+        <div class="result-grid">
+            <div class="result-card">
+                <div class="result-card-title">MATCHING SKILLS</div>
+                @foreach (var skill in result.MatchingSkills ?? new())
+                {
+                    <span class="chip chip-have">@skill</span>
+                }
+            </div>
+            <div class="result-card">
+                <div class="result-card-title">MISSING SKILLS</div>
+                @foreach (var skill in result.MissingSkills ?? new())
+                {
+                    <span class="chip chip-missing">@skill</span>
+                }
+            </div>
+            <div class="result-card">
+                <div class="result-card-title">CRITICAL MISSING</div>
+                @foreach (var skill in result.CriticalMissingSkills ?? new())
+                {
+                    <span class="chip chip-critical">@skill</span>
+                }
+            </div>
+        </div>
+
+        <div class="suggestions">
+            <div class="suggestion-title">SUGGESTIONS FOR IMPROVEMENT</div>
+            @foreach (var suggestion in result.Suggestions ?? new())
+            {
+                <div class="suggestion-item">
+                    <span class="suggestion-dot">•</span>
+                    <span>@suggestion</span>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private string jobDescription = "";
+    private string resumeContent = "";
+    private AnalyzeResult? result = null;
+    private bool isLoading = false;
+    private string? errorMessage = null;
+
+    private async Task AnalyzeAsync()
+    {
+        if (string.IsNullOrWhiteSpace(jobDescription) || string.IsNullOrWhiteSpace(resumeContent))
+        {
+            errorMessage = "Please provide both Job Description and Resume.";
+            return;
+        }
+
+        isLoading = true;
+        errorMessage = null;
+        result = null;
+
+        try
+        {
+            var request = new { ResumeContent = resumeContent, JobDescription = jobDescription };
+            var response = await Http.PostAsJsonAsync("/api/analyze", request);
+            
+            if (response.IsSuccessStatusCode)
+            {
+                result = await response.Content.ReadFromJsonAsync<AnalyzeResult>();
+            }
+            else
+            {
+                errorMessage = "Failed to analyze. Ensure API and Ollama are running.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    public record AnalyzeResult(
+        int AtsScore,
+        List<string> MatchingSkills,
+        List<string> MissingSkills,
+        List<string> CriticalMissingSkills,
+        List<string> Suggestions
+    );
+}
