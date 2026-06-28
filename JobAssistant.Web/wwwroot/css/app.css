@@ -392,3 +392,72 @@ textarea::placeholder { color: #3a3a42; }
     color: #e8e8ea;
     border-bottom: 2px solid #6366f1;
 }
+
+/* --- Priority & Edit Modal Styles --- */
+.priority-btn {
+    background: transparent;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 4px;
+    color: #555560;
+    width: 22px;
+    height: 18px;
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    font-family: inherit;
+    transition: all 0.1s;
+}
+.priority-btn:hover {
+    border-color: #6366f1;
+    color: #a5b4fc;
+    background: #1e1e28;
+}
+
+.job-url-link {
+    font-size: 11px;
+    color: #6366f1;
+    text-decoration: none;
+    margin-top: 2px;
+    display: inline-block;
+}
+.job-url-link:hover { text-decoration: underline; }
+
+.av-btn {
+    background: transparent;
+    border: none;
+    color: #6366f1;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+    padding: 0;
+}
+.av-btn:hover { color: #a5b4fc; }
+
+.note-textarea {
+    min-height: 140px;
+    resize: vertical;
+    line-height: 1.6;
+}
+
+.btn-primary {
+    background: #6366f1;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.1s;
+}
+.btn-primary:hover { background: #4f46e5; }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.co { font-weight: 500; }
+.pos { font-size: 11px; color: #888890; }
+.src { color: #888890; font-size: 12px; }
+.dt { color: #888890; font-size: 12px; }

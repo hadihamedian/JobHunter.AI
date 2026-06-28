@@ -80,6 +80,18 @@ apps.MapDelete("/{id:guid}", async (Guid id, ApplicationRepository repo) =>
 apps.MapPost("/chat", async (DataChatRequest req, DataChatService chatSvc) =>
     Results.Ok(await chatSvc.ChatAsync(req)));
 
+apps.MapPost("/{id:guid}/move-up", async (Guid id, ApplicationRepository repo) =>
+{
+    var ok = await repo.MoveUpAsync(id);
+    return ok ? Results.NoContent() : Results.BadRequest();
+});
+
+apps.MapPost("/{id:guid}/move-down", async (Guid id, ApplicationRepository repo) =>
+{
+    var ok = await repo.MoveDownAsync(id);
+    return ok ? Results.NoContent() : Results.BadRequest();
+});
+
 await ApplicationRepository.InitDbAsync(dataSource);
 
 app.Run();

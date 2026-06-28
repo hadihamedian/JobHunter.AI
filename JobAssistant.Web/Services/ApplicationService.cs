@@ -47,4 +47,24 @@ public class ApplicationService(HttpClient http)
         if (res.IsSuccessStatusCode) return await res.Content.ReadFromJsonAsync<DataChatResponse>();
         return null;
     }
+
+    public async Task<bool> MoveUpAsync(Guid id)
+    {
+        try
+        {
+            var response = await http.PostAsync($"/api/applications/{id}/move-up", null);
+            return response.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
+    public async Task<bool> MoveDownAsync(Guid id)
+    {
+        try
+        {
+            var response = await http.PostAsync($"/api/applications/{id}/move-down", null);
+            return response.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
 }

@@ -35,7 +35,7 @@
 <div style="margin: 20px 0; display: flex; gap: 8px;">
     @foreach (var filter in new[] { "All", "Active", "Interview", "Offer", "Rejected" })
     {
-        <button class="chat-suggestion-chip @(activeFilter == filter ? "active" : "")" 
+        <button class="chat-suggestion-chip @(activeFilter == filter ? "active" : "")"
                 style="@(activeFilter == filter ? "background: #252535; color: #fff;" : "")"
                 @onclick="() => SetFilter(filter)">
             @filter
@@ -52,11 +52,12 @@ else
     <table class="data-table">
         <thead>
             <tr>
+                <th style="width:50px"></th>
                 <th>Company / Position</th>
-                <th>Source</th>
+                <th>Resume</th>
+                <th>Date</th>
                 <th>Status</th>
-                <th>Applied Date</th>
-                <th>Actions</th>
+                <th style="width:70px"></th>
             </tr>
         </thead>
         <tbody>
@@ -64,13 +65,27 @@ else
             {
                 <tr>
                     <td>
-                        <div style="font-weight: 500;">@app.CompanyName</div>
-                        <div style="font-size: 11px; color: #888890;">@app.Position</div>
+                        <div style="display:flex;flex-direction:column;gap:2px;align-items:center">
+                            <button class="priority-btn" @onclick="() => MoveUp(app.Id)">↑</button>
+                            <button class="priority-btn" @onclick="() => MoveDown(app.Id)">↓</button>
+                        </div>
                     </td>
-                    <td>@app.Source</td>
+                    <td>
+                        <div class="co">@app.CompanyName</div>
+                        <div class="pos">@app.Position</div>
+                        @if (!string.IsNullOrEmpty(app.JobUrl))
+                        {
+                            <a href="@app.JobUrl" target="_blank" class="job-url-link">
+                                View posting ↗
+                            </a>
+                        }
+                    </td>
+                    <td class="src">@(app.ResumeVersion ?? "—")</td>
+                    <td class="dt">@(app.AppliedAt?.ToString("MMM d") ?? app.CreatedAt.ToString("MMM d"))</td>
                     <td><span class="chip @GetStatusClass(app.Status)">@GetStatusLabel(app.Status)</span></td>
-                    <td>@(app.AppliedAt?.ToString("MMM dd, yyyy") ?? "-")</td>
-                    <td><button class="btn-cancel" style="padding: 4px 8px; font-size: 11px;" @onclick="() => ViewDetail(app.Id)">View</button></td>
+                    <td>
+                        <button class="av-btn" @onclick="() => OpenEditModal(app.Id)">Edit →</button>
+                    </td>
                 </tr>
             }
         </tbody>
@@ -82,13 +97,11 @@ else
         <span>💬 Ask about your data</span>
         <span style="font-size: 10px; background: #2a1f0a; color: #fbbf24; padding: 2px 6px; border-radius: 4px;">AI Powered</span>
     </div>
-    
     <div class="chat-suggestions">
         <button class="chat-suggestion-chip" @onclick="@(() => QuickAsk("Which companies haven't replied?"))">Unreplied companies?</button>
         <button class="chat-suggestion-chip" @onclick="@(() => QuickAsk("My response rate by source?"))">Response rate by source?</button>
         <button class="chat-suggestion-chip" @onclick="@(() => QuickAsk("How many interviews this month?"))">Interviews this month?</button>
     </div>
-
     <div class="chat-messages">
         @foreach (var msg in chatMessages)
         {
@@ -132,7 +145,6 @@ else
             <div class="chat-loading-dots">...</div>
         }
     </div>
-
     <div class="chat-input-row">
         <input class="chat-input" @bind="chatInput" @bind:event="oninput" @onkeydown="HandleChatKey" placeholder="Ask anything about your applications..." dir="auto" />
         <button class="chat-send-btn" @onclick="SendChatMessage" disabled="@(isChatLoading || string.IsNullOrWhiteSpace(chatInput))">Send</button>
@@ -186,34 +198,63 @@ else
     </div>
 }
 
-@if (viewingDetail != null)
+@if (showEditModal && editingApp is not null)
 {
-    <div class="modal-overlay">
-        <div class="modal">
-            <div class="modal-title">@viewingDetail.CompanyName - @viewingDetail.Position</div>
+    <div class="modal-overlay" @onclick="() => showEditModal = false">
+        <div class="modal" @onclick:stopPropagation="true">
+            <div class="modal-title">Edit Application</div>
+
             <div class="form-group">
-                <label class="form-label">Update Status</label>
-                <select class="form-select" value="@viewingDetail.Status" @onchange="UpdateStatus">
+                <label class="form-label">Company Name</label>
+                <input class="form-input" @bind="editCompanyName" />
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Position</label>
+                <input class="form-input" @bind="editPosition" />
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Status</label>
+                <select class="form-select" @bind="editStatus">
                     <option value="Saved">Saved</option>
                     <option value="Applied">Applied</option>
                     <option value="HRInterview">HR Interview</option>
                     <option value="TechnicalInterview">Technical Interview</option>
                     <option value="FinalInterview">Final Interview</option>
-                    <option value="Offer">Offer</option>
+                    <option value="Offer">Offer 🎉</option>
                     <option value="Rejected">Rejected</option>
                 </select>
             </div>
+
             <div class="form-group">
-                <label class="form-label">Source: @viewingDetail.Source</label>
-                <label class="form-label">Applied: @(viewingDetail.AppliedAt?.ToString("yyyy-MM-dd") ?? "-")</label>
-                <label class="form-label">Notes:</label>
-                <div style="font-size: 12px; color: #e8e8ea; background: #0d0d0f; padding: 10px; border-radius: 6px;">
-                    @(string.IsNullOrEmpty(viewingDetail.Notes) ? "No notes." : viewingDetail.Notes)
-                </div>
+                <label class="form-label">Applied date</label>
+                <input type="date" class="form-input"
+                       value="@(editAppliedAt?.ToString("yyyy-MM-dd") ?? "")"
+                       @onchange="OnAppliedAtChanged" />
             </div>
-            <div class="modal-actions" style="justify-content: space-between;">
-                <button class="btn-cancel" style="color: #f87171; border-color: #4a1515;" @onclick="DeleteCurrent">Delete</button>
-                <button class="btn-cancel" @onclick="() => viewingDetail = null">Close</button>
+
+            <div class="form-group">
+                <label class="form-label">Job posting URL</label>
+                <input type="url" class="form-input"
+                       placeholder="https://..."
+                       @bind="editJobUrl" />
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea class="form-textarea note-textarea"
+                          placeholder="Interview notes, salary, recruiter name, questions asked..."
+                          @bind="editNotes"></textarea>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn-cancel" @onclick="() => showEditModal = false">
+                    Cancel
+                </button>
+                <button class="btn-primary" @onclick="SaveEdit" disabled="@isSaving">
+                    @(isSaving ? "Saving..." : "Save changes")
+                </button>
             </div>
         </div>
     </div>
@@ -224,14 +265,11 @@ else
     DashboardStats? stats;
     string activeFilter = "All";
     bool isLoading = true;
-
     List<(string Role, string TextContent, DataTable? Table)> chatMessages = new();
     string chatInput = "";
     bool isChatLoading = false;
-
     bool showAddDialog = false;
-    
-    // کلاس جدید برای بایندینگ فرم بدون خطای init-only
+
     class ApplicationFormModel
     {
         public string CompanyName { get; set; } = "";
@@ -239,11 +277,19 @@ else
         public string Source { get; set; } = "LinkedIn";
         public string Status { get; set; } = "Applied";
     }
-
     ApplicationFormModel formModel = new();
     DateTime addDateOnly = DateTime.Today;
 
-    ApplicationDetail? viewingDetail = null;
+    // Edit modal state
+    bool showEditModal = false;
+    ApplicationDetail? editingApp = null;
+    string editCompanyName = "";
+    string editPosition = "";
+    string editNotes = "";
+    string editStatus = "";
+    string editJobUrl = "";
+    DateTimeOffset? editAppliedAt = null;
+    bool isSaving = false;
 
     IEnumerable<ApplicationSummary> filteredApps => activeFilter switch
     {
@@ -280,37 +326,68 @@ else
             formModel.Status,
             null,
             null,
-            new DateTimeOffset(addDateOnly.ToUniversalTime(), TimeSpan.Zero)
+            new DateTimeOffset(addDateOnly.ToUniversalTime(), TimeSpan.Zero),
+            0
         );
-
         await AppService.CreateAsync(req);
-        
         showAddDialog = false;
         formModel = new();
         addDateOnly = DateTime.Today;
-        
         await LoadData();
     }
 
-    async Task ViewDetail(Guid id)
+    async Task OpenEditModal(Guid id)
     {
-        viewingDetail = await AppService.GetByIdAsync(id);
+        editingApp = await AppService.GetByIdAsync(id);
+        if (editingApp is not null)
+        {
+            editCompanyName = editingApp.CompanyName;
+            editPosition = editingApp.Position;
+            editNotes = editingApp.Notes ?? "";
+            editStatus = editingApp.Status;
+            editJobUrl = editingApp.JobUrl ?? "";
+            editAppliedAt = editingApp.AppliedAt;
+            showEditModal = true;
+        }
     }
 
-    async Task UpdateStatus(ChangeEventArgs e)
+    void OnAppliedAtChanged(ChangeEventArgs e)
     {
-        if (viewingDetail == null || e.Value == null) return;
-        var newStatus = e.Value.ToString()!;
-        await AppService.UpdateAsync(viewingDetail.Id, new UpdateApplicationRequest(null, null, null, null, null, newStatus, null, null, null));
+        var val = e.Value?.ToString();
+        editAppliedAt = string.IsNullOrEmpty(val) ? null : DateTimeOffset.Parse(val);
+    }
+
+    async Task SaveEdit()
+    {
+        if (editingApp is null) return;
+        isSaving = true;
+
+        await AppService.UpdateAsync(editingApp.Id, new UpdateApplicationRequest(
+            string.IsNullOrWhiteSpace(editCompanyName) ? null : editCompanyName,
+            string.IsNullOrWhiteSpace(editPosition) ? null : editPosition,
+            string.IsNullOrWhiteSpace(editJobUrl) ? null : editJobUrl,
+            null, null,
+            editStatus,
+            null,
+            string.IsNullOrWhiteSpace(editNotes) ? null : editNotes,
+            editAppliedAt,
+            null
+        ));
+
+        showEditModal = false;
+        isSaving = false;
         await LoadData();
-        viewingDetail = viewingDetail with { Status = newStatus };
     }
 
-    async Task DeleteCurrent()
+    async Task MoveUp(Guid id)
     {
-        if (viewingDetail == null) return;
-        await AppService.DeleteAsync(viewingDetail.Id);
-        viewingDetail = null;
+        await AppService.MoveUpAsync(id);
+        await LoadData();
+    }
+
+    async Task MoveDown(Guid id)
+    {
+        await AppService.MoveDownAsync(id);
         await LoadData();
     }
 
@@ -326,13 +403,12 @@ else
         var history = chatMessages.SkipLast(1)
             .Select(m => new DataChatMessage(m.Role, m.TextContent)).ToList();
 
-        try 
+        try
         {
             var response = await AppService.ChatAsync(new DataChatRequest(question, history));
             if (response != null) chatMessages.Add(("assistant", response.TextAnswer, response.Table));
         }
         catch { chatMessages.Add(("assistant", "Error connecting to AI.", null)); }
-
         isChatLoading = false;
     }
 

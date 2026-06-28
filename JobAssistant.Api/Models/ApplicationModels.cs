@@ -10,7 +10,8 @@ public record ApplicationSummary(
     string Status,
     int? AtsScore,
     DateTimeOffset? AppliedAt,
-    DateTimeOffset CreatedAt
+    DateTimeOffset CreatedAt,
+    int Priority
 );
 
 public record ApplicationDetail(
@@ -25,7 +26,8 @@ public record ApplicationDetail(
     string? Notes,
     DateTimeOffset? AppliedAt,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? UpdatedAt
+    DateTimeOffset? UpdatedAt,
+    int Priority
 );
 
 public record CreateApplicationRequest(
@@ -37,7 +39,8 @@ public record CreateApplicationRequest(
     string Status,
     int? AtsScore,
     string? Notes,
-    DateTimeOffset? AppliedAt
+    DateTimeOffset? AppliedAt,
+    int Priority = 0
 );
 
 public record UpdateApplicationRequest(
@@ -49,7 +52,8 @@ public record UpdateApplicationRequest(
     string? Status,
     int? AtsScore,
     string? Notes,
-    DateTimeOffset? AppliedAt
+    DateTimeOffset? AppliedAt,
+    int? Priority
 );
 
 public record DashboardStats(
@@ -76,3 +80,5 @@ public record DataTable(
     List<string> Columns,
     List<List<string>> Rows
 );
+
+public record ReorderRequest(Guid Id, int NewPriority);

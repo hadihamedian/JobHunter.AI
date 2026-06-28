@@ -1,0 +1,25 @@
+{
+  "output": {
+    "filePath": "codetree.txt",
+    "style": "plain",
+    "showLineNumbers": false,
+    "removeComments": false,
+    "removeEmptyLines": false,
+    "topFilesLength": 5,
+    "copyToClipboard": false,
+    "headerText": "",
+    "instructionFilePath": ""
+  },
+  "include": ["**/*"],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "**/bin/**",
+      "**/obj/**",
+      "**/lib/**",
+      "JobAssistant.Web/bin/**",
+      "JobAssistant.Web/obj/**"
+    ]
+  }
+}
