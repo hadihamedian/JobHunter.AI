@@ -37,6 +37,21 @@ app.MapPost("/api/analyze", async (AnalyzeRequest request, AiAnalyzerService ana
     return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
 });
 
+app.MapPost("/api/analyze-by-id", async (
+    AnalyzeByIdRequest req,
+    ResumeRepository resumeRepo,
+    AiAnalyzerService analyzer) =>
+{
+    if (req.ResumeId == Guid.Empty || string.IsNullOrWhiteSpace(req.JobDescription))
+        return Results.BadRequest("ResumeId and JobDescription are required.");
+
+    var resume = await resumeRepo.GetByIdAsync(req.ResumeId);
+    if (resume is null) return Results.NotFound("Resume not found.");
+
+    var result = await analyzer.AnalyzeAsync(resume.Content, req.JobDescription);
+    return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
+});
+
 // <-- Endpoint جدید اضافه شد
 app.MapPost("/api/chat", async (ChatRequest request, CareerChatService chatService) =>
 {

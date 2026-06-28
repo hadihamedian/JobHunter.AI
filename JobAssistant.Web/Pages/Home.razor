@@ -1,239 +1,322 @@
 ﻿@page "/"
 @inject HttpClient Http
+@inject ResumeService ResumeService
+@using JobAssistant.Web.Models
+@using JobAssistant.Web.Services
 @using Microsoft.AspNetCore.Components.Web
 
-<div class="grid-2">
+<!-- Job Description Panel -->
+<div class="analyze-grid">
     <div class="panel">
-        <div class="panel-title">Job Description</div>
-        <textarea @bind="jobDescription" placeholder="Paste job description here..."></textarea>
+        <div class="panel-title">📋 Job description</div>
+        <textarea class="analyze-textarea"
+                  placeholder="Paste the job posting here..."
+                  @bind="jobDescription"
+                  rows="8"></textarea>
     </div>
+
     <div class="panel">
-        <div class="panel-title">Your Resume</div>
-        <textarea @bind="resumeContent" placeholder="Paste your resume content here..."></textarea>
+        <div class="panel-title">📄 Your resume</div>
+
+        @if (isLoadingResumes)
+        {
+            <div style="color:#555560;font-size:12px;padding:8px 0">Loading resumes...</div>
+        }
+        else if (resumes.Count == 0)
+        {
+            <div class="no-resumes">
+                <div style="font-size:13px;color:#555560;margin-bottom:10px">
+                    No resumes yet.
+                </div>
+                <a href="/resumes" class="btn-primary" style="text-decoration:none;display:inline-flex">
+                    + Add your first resume
+                </a>
+            </div>
+        }
+        else
+        {
+            <div class="resume-select-list">
+                @foreach (var resume in resumes)
+                {
+                    <div class="resume-option @(selectedResumeId == resume.Id ? "resume-option-selected" : "")"
+                        @onclick="() => selectedResumeId = resume.Id">
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <div class="resume-option-dot @(selectedResumeId == resume.Id ? "resume-option-dot-active" : "")"></div>
+                            <div>
+                                <div class="resume-option-name">
+                                    @resume.Name
+                                    @if (resume.IsDefault)
+                                    {
+                                        <span class="default-badge" style="margin-left:6px">Default</span>
+                                    }
+                                </div>
+                                <div class="resume-option-meta">@resume.WordCount words · @resume.CreatedAt.ToString("MMM d")</div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <a href="/resumes" style="font-size:11px;color:#6366f1;text-decoration:none;display:block;margin-top:10px">
+                Manage resumes →
+            </a>
+        }
+
+        <button class="btn-analyze"
+                @onclick="Analyze"
+                disabled="@(isAnalyzing || selectedResumeId == Guid.Empty || string.IsNullOrWhiteSpace(jobDescription))">
+            @(isAnalyzing ? "Analyzing..." : "✦ Analyze now")
+        </button>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="error">@errorMessage</div>
+        }
     </div>
 </div>
 
-<button class="btn-analyze" @onclick="AnalyzeAsync" disabled="@isLoading">
-    @(isLoading ? "Analyzing..." : "Analyze now")
-</button>
-
-@if (!string.IsNullOrEmpty(errorMessage))
-{
-    <div class="error">@errorMessage</div>
-}
-
-@if (isLoading)
-{
-    <div class="loading">Analyzing resume against job description via Ollama...</div>
-}
-else if (result != null)
+<!-- Result -->
+@if (result != null)
 {
     <div class="result-panel">
-        <div>
-            <div class="score">@result.AtsScore%</div>
-            <div class="score-label">ATS MATCH SCORE</div>
+        <div class="result-header">
+            <div style="font-size:13px;font-weight:500;color:#e8e8ea">Analysis result</div>
+            <div style="text-align:right">
+                <div style="font-size:10px;color:#555560;margin-bottom:2px">ATS score</div>
+                <div class="score">@result.AtsScore<span style="font-size:14px;color:#555560">/100</span></div>
+            </div>
         </div>
 
         <div class="result-grid">
             <div class="result-card">
-                <div class="result-card-title">MATCHING SKILLS</div>
-                @foreach (var skill in result.MatchingSkills ?? new())
+                <div class="result-card-title">You have these ✓</div>
+                @foreach (var skill in result.MatchingSkills)
                 {
                     <span class="chip chip-have">@skill</span>
                 }
             </div>
             <div class="result-card">
-                <div class="result-card-title">MISSING SKILLS</div>
-                @foreach (var skill in result.MissingSkills ?? new())
-                {
-                    <span class="chip chip-missing">@skill</span>
-                }
-            </div>
-            <div class="result-card">
-                <div class="result-card-title">CRITICAL MISSING</div>
-                @foreach (var skill in result.CriticalMissingSkills ?? new())
+                <div class="result-card-title">Critical gaps</div>
+                @foreach (var skill in result.CriticalMissingSkills)
                 {
                     <span class="chip chip-critical">@skill</span>
                 }
             </div>
+            <div class="result-card">
+                <div class="result-card-title">Add to resume</div>
+                @foreach (var skill in result.MissingSkills.Take(5))
+                {
+                    <span class="chip chip-improve">@skill</span>
+                }
+            </div>
         </div>
 
-        <div class="suggestions">
-            <div class="suggestion-title">SUGGESTIONS FOR IMPROVEMENT</div>
-            @foreach (var suggestion in result.Suggestions ?? new())
-            {
-                <div class="suggestion-item">
-                    <span class="suggestion-dot">•</span>
-                    <span>@suggestion</span>
-                </div>
-            }
-        </div>
-    </div>
+        @if (result.Suggestions.Any())
+        {
+            <div class="suggestions">
+                <div class="suggestion-title">💡 Suggestions</div>
+                @foreach (var s in result.Suggestions)
+                {
+                    <div class="suggestion-item">
+                        <span class="suggestion-dot">·</span>
+                        <span>@s</span>
+                    </div>
+                }
+            </div>
+        }
 
-    <div class="chat-panel">
-        <div class="panel-title">💬 Ask about this job</div>
-        
-        <div class="chat-messages" id="chat-messages">
-            @if (chatHistory.Count == 0)
+        <!-- Career Chat -->
+        <div class="chat-section" style="margin-top:16px">
+            <div class="chat-header">
+                <span style="color:#6366f1">💬</span>
+                <div style="font-size:12px;font-weight:500;color:#e8e8ea">Ask about this job</div>
+                <span class="chat-badge">AI powered</span>
+            </div>
+
+            @if (chatMessages.Count == 0)
             {
-                <div class="chat-empty">
-                    Ask me anything about this job and your resume...
-                </div>
                 <div class="chat-suggestions">
-                    <button class="chat-suggestion-btn" @onclick='() => QuickAsk("What should I learn first to close my skill gaps?")'>
+                    <button class="chat-suggestion-chip" @onclick='() => QuickAsk("What should I learn first to close my skill gaps?")'>
                         What should I learn first?
                     </button>
-                    <button class="chat-suggestion-btn" @onclick='() => QuickAsk("Why is my ATS score not higher?")'>
+                    <button class="chat-suggestion-chip" @onclick='() => QuickAsk("Why is my ATS score not higher?")'>
                         Why is my score not higher?
                     </button>
-                    <button class="chat-suggestion-btn" @onclick='() => QuickAsk("Am I ready to apply for this job?")'>
+                    <button class="chat-suggestion-chip" @onclick='() => QuickAsk("Am I ready to apply for this job?")'>
                         Am I ready to apply?
                     </button>
                 </div>
             }
-            
-            @foreach (var msg in chatHistory)
-            {
-                <div class="chat-msg @(msg.Role == "user" ? "chat-msg-user" : "chat-msg-assistant")" dir="auto">
-                    @msg.Content
-                </div>
-            }
-            
-            @if (isChatLoading)
-            {
-                <div class="chat-msg chat-msg-assistant chat-loading">
-                    <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
-                </div>
-            }
-        </div>
-        
-        <div class="chat-input-row">
-            <input 
-                class="chat-input" 
-                placeholder="Ask about this job..." 
-                @bind="currentMessage"
-                @bind:event="oninput"
-                @onkeydown="HandleKeyDown"
-                dir="auto"/>
-            <button class="chat-send-btn" @onclick="SendMessage" disabled="@(isChatLoading || string.IsNullOrWhiteSpace(currentMessage))">
-                Send
-            </button>
+
+            <div class="chat-messages">
+                @foreach (var msg in chatMessages)
+                {
+                    @if (msg.Role == "user")
+                    {
+                        <div class="chat-msg-user">@msg.Content</div>
+                    }
+                    else
+                    {
+                        <div class="chat-msg-ai">
+                            <div class="chat-msg-ai-text">@msg.Content</div>
+                        </div>
+                    }
+                }
+                @if (isChatLoading)
+                {
+                    <div class="chat-msg-ai">
+                        <div class="chat-msg-ai-text chat-loading-dots">...</div>
+                    </div>
+                }
+            </div>
+
+            <div class="chat-input-row">
+                <input class="chat-input"
+                       placeholder="Ask about this job..."
+                       @bind="chatInput"
+                       @bind:event="oninput"
+                       @onkeydown="HandleKeyDown" />
+                <button class="chat-send-btn"
+                        @onclick="SendChatMessage"
+                        disabled="@(isChatLoading || string.IsNullOrWhiteSpace(chatInput))">
+                    Send
+                </button>
+            </div>
         </div>
     </div>
 }
 
 @code {
-    private string jobDescription = "";
-    private string resumeContent = "";
-    private AnalyzeResult? result = null;
-    private bool isLoading = false;
-    private string? errorMessage = null;
+    // Resume selection
+    List<ResumeSummary> resumes = new();
+    Guid selectedResumeId = Guid.Empty;
+    bool isLoadingResumes = true;
 
-    // Chat State
-    List<ChatMessage> chatHistory = new();
-    string currentMessage = "";
+    // Analysis
+    string jobDescription = "";
+    AnalyzeResult? result = null;
+    bool isAnalyzing = false;
+    string? errorMessage = null;
+
+    // Chat
+    List<(string Role, string Content)> chatMessages = new();
+    string chatInput = "";
     bool isChatLoading = false;
 
-    private async Task AnalyzeAsync()
+    protected override async Task OnInitializedAsync()
     {
-        if (string.IsNullOrWhiteSpace(jobDescription) || string.IsNullOrWhiteSpace(resumeContent))
-        {
-            errorMessage = "Please provide both Job Description and Resume.";
-            return;
-        }
+        resumes = await ResumeService.GetAllAsync();
 
-        isLoading = true;
+        // default resume رو انتخاب کن
+        var defaultResume = resumes.FirstOrDefault(r => r.IsDefault);
+        if (defaultResume != null)
+            selectedResumeId = defaultResume.Id;
+        else if (resumes.Count > 0)
+            selectedResumeId = resumes[0].Id;
+
+        isLoadingResumes = false;
+    }
+
+    async Task Analyze()
+    {
+        if (selectedResumeId == Guid.Empty || string.IsNullOrWhiteSpace(jobDescription))
+            return;
+
+        isAnalyzing = true;
         errorMessage = null;
         result = null;
-        chatHistory.Clear(); // ریست کردن چت با آنالیز جدید
+        chatMessages.Clear();
 
         try
         {
-            var request = new { ResumeContent = resumeContent, JobDescription = jobDescription };
-            var response = await Http.PostAsJsonAsync("/api/analyze", request);
-            
+            var response = await Http.PostAsJsonAsync("/api/analyze-by-id", new
+            {
+                ResumeId = selectedResumeId,
+                JobDescription = jobDescription
+            });
+
             if (response.IsSuccessStatusCode)
-            {
                 result = await response.Content.ReadFromJsonAsync<AnalyzeResult>();
-            }
             else
-            {
-                errorMessage = "Failed to analyze. Ensure API and Ollama are running.";
-            }
+                errorMessage = "Analysis failed. Please try again.";
         }
-        catch (Exception ex)
+        catch
         {
-            errorMessage = $"Error: {ex.Message}";
+            errorMessage = "Could not connect to the server.";
         }
-        finally
-        {
-            isLoading = false;
-        }
-    }
 
-    async Task SendMessage()
-    {
-        if (string.IsNullOrWhiteSpace(currentMessage) || isChatLoading) return;
-
-        var userMsg = currentMessage.Trim();
-        currentMessage = "";
-        
-        chatHistory.Add(new ChatMessage("user", userMsg));
-        isChatLoading = true;
-        StateHasChanged();
-
-        var request = new
-        {
-            ResumeContent = resumeContent,
-            JobDescription = jobDescription,
-            AnalysisSummary = BuildAnalysisSummary(),
-            History = chatHistory.SkipLast(1).ToList(),
-            UserMessage = userMsg
-        };
-
-        var response = await Http.PostAsJsonAsync("/api/chat", request);
-        if (response.IsSuccessStatusCode)
-        {
-            var chatRes = await response.Content.ReadFromJsonAsync<ChatResponse>();
-            chatHistory.Add(new ChatMessage("assistant", chatRes?.Reply ?? ""));
-        }
-        else
-        {
-            chatHistory.Add(new ChatMessage("assistant", "Sorry, an error occurred communicating with the AI."));
-        }
-        
-        isChatLoading = false;
+        isAnalyzing = false;
     }
 
     string BuildAnalysisSummary()
     {
         if (result == null) return "";
         return $"ATS Score: {result.AtsScore}/100. " +
-               $"Matching skills: {string.Join(", ", result.MatchingSkills ?? new())}. " +
-               $"Missing skills: {string.Join(", ", result.MissingSkills ?? new())}. " +
-               $"Critical gaps: {string.Join(", ", result.CriticalMissingSkills ?? new())}.";
+               $"Matching: {string.Join(", ", result.MatchingSkills)}. " +
+               $"Missing: {string.Join(", ", result.MissingSkills)}. " +
+               $"Critical gaps: {string.Join(", ", result.CriticalMissingSkills)}.";
+    }
+
+    async Task SendChatMessage()
+    {
+        if (string.IsNullOrWhiteSpace(chatInput) || isChatLoading) return;
+
+        var question = chatInput.Trim();
+        chatInput = "";
+        chatMessages.Add(("user", question));
+        isChatLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var selectedResume = resumes.FirstOrDefault(r => r.Id == selectedResumeId);
+            var resumeDetail = selectedResume != null
+                ? await ResumeService.GetByIdAsync(selectedResumeId)
+                : null;
+
+            var payload = new
+            {
+                ResumeContent = resumeDetail?.Content ?? "",
+                JobDescription = jobDescription,
+                AnalysisSummary = BuildAnalysisSummary(),
+                History = chatMessages.SkipLast(1)
+                    .Select(m => new { Role = m.Role, Content = m.Content })
+                    .ToList(),
+                UserMessage = question
+            };
+
+            var response = await Http.PostAsJsonAsync("/api/chat", payload);
+            if (response.IsSuccessStatusCode)
+            {
+                var chatResponse = await response.Content
+                    .ReadFromJsonAsync<ChatResponse>();
+                chatMessages.Add(("assistant", chatResponse?.Reply ?? ""));
+            }
+        }
+        catch { }
+
+        isChatLoading = false;
+    }
+
+    async Task QuickAsk(string question)
+    {
+        chatInput = question;
+        await SendChatMessage();
     }
 
     async Task HandleKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter" && !e.ShiftKey)
-            await SendMessage();
+            await SendChatMessage();
     }
 
-    async Task QuickAsk(string question)
-    {
-        currentMessage = question;
-        await SendMessage();
-    }
-
-    public record AnalyzeResult(
+    // local records برای deserialize
+    record AnalyzeResult(
         int AtsScore,
         List<string> MatchingSkills,
         List<string> MissingSkills,
         List<string> CriticalMissingSkills,
-        List<string> Suggestions
-    );
+        List<string> Suggestions);
 
-    public record ChatMessage(string Role, string Content);
-    public record ChatResponse(string Reply);
+    record ChatResponse(string Reply);
 }
