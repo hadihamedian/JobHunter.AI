@@ -107,19 +107,21 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING ""Id"";";
 ""CompanyName"" = COALESCE($1, ""CompanyName""),
 ""Position"" = COALESCE($2, ""Position""),
 ""JobUrl"" = $3,
-""Source"" = COALESCE($4, ""Source""),
-""ResumeVersion"" = $5,
-""Status"" = COALESCE($6, ""Status""),
-""AtsScore"" = $7,
-""Notes"" = $8,
-""AppliedAt"" = $9,
-""Priority"" = COALESCE($11, ""Priority""),
+""JobDescription"" = $4,
+""Source"" = COALESCE($5, ""Source""),
+""ResumeVersion"" = $6,
+""Status"" = COALESCE($7, ""Status""),
+""AtsScore"" = $8,
+""Notes"" = $9,
+""AppliedAt"" = $10,
+""Priority"" = COALESCE($12, ""Priority""),
 ""UpdatedAt"" = NOW()
-WHERE ""Id"" = $10";
+WHERE ""Id"" = $11";
         await using var cmd = db.CreateCommand(sql);
         cmd.Parameters.AddWithValue(req.CompanyName ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.Position ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.JobUrl ?? (object)DBNull.Value);
+        cmd.Parameters.AddWithValue(req.JobDescription ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.Source ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.ResumeVersion ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.Status ?? (object)DBNull.Value);

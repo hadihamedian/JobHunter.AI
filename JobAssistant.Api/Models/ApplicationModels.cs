@@ -48,6 +48,7 @@ public record UpdateApplicationRequest(
     string? CompanyName,
     string? Position,
     string? JobUrl,
+    string? JobDescription,
     string? Source,
     string? ResumeVersion,
     string? Status,

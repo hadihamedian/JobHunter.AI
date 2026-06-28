@@ -230,6 +230,13 @@ else
                     <input class="form-input" @bind="editCompanyName" />
                 </div>
                 <div class="form-group">
+                    <label class="form-label">Job Description</label>
+                    <textarea class="form-textarea" 
+                      placeholder="Paste the full job description here..."
+                      style="min-height: 120px;"
+                      @bind="editJobDescription"></textarea>
+                </div>
+                <div class="form-group">
                     <label class="form-label">Position</label>
                     <input class="form-input" @bind="editPosition" />
                 </div>
@@ -290,6 +297,10 @@ else
                                     disabled="@isGenerating">
                                 @(isGenerating ? "Generating..." : "✦ Generate questions")
                             </button>
+                            @if (!string.IsNullOrEmpty(errorMessage))
+                            {
+                                <div class="error" style="margin-top:12px;font-size:12px">@errorMessage</div>
+                            }
                         </div>
                     }
                     else
@@ -348,7 +359,9 @@ else
     string chatInput = "";
     bool isChatLoading = false;
     bool showAddDialog = false;
-
+    string editJobDescription = "";
+    string? errorMessage = null;
+    
     class ApplicationFormModel
     {
         public string CompanyName { get; set; } = "";
@@ -435,6 +448,7 @@ else
             activeModalTab = "details";
             await LoadAppQuestions(id);
             showEditModal = true;
+            editJobDescription = editingApp.JobDescription ?? "";
         }
     }
 
@@ -453,6 +467,7 @@ else
             string.IsNullOrWhiteSpace(editCompanyName) ? null : editCompanyName,
             string.IsNullOrWhiteSpace(editPosition) ? null : editPosition,
             string.IsNullOrWhiteSpace(editJobUrl) ? null : editJobUrl,
+            string.IsNullOrWhiteSpace(editJobDescription) ? null : editJobDescription,
             null, null,
             editStatus,
             null,
@@ -488,22 +503,55 @@ else
     async Task GenerateQuestions()
     {
         if (editingApp == null) return;
+    
+        // از editJobDescription استفاده کن (نه editingApp.JobDescription)
+        var jobDesc = editJobDescription;
+    
+        if (string.IsNullOrWhiteSpace(jobDesc))
+        {
+            // نمایش پیام خطا
+            errorMessage = "Please fill in the Job Description in the Details tab first.";
+            activeModalTab = "details";
+            StateHasChanged();
+            return;
+        }
+    
         isGenerating = true;
-
-        var defaultResumes = await ResumeService.GetAllAsync();
-        var resume = defaultResumes.FirstOrDefault(r => r.IsDefault)
-                     ?? defaultResumes.FirstOrDefault();
-        var resumeDetail = resume != null
-            ? await ResumeService.GetByIdAsync(resume.Id)
-            : null;
-
-        appQuestions = await InterviewService.GenerateAsync(new GenerateQuestionsRequest(
-            editingApp.Id,
-            editingApp.JobDescription ?? "",
-            resumeDetail?.Content ?? ""
-        ));
-
-        isGenerating = false;
+        StateHasChanged();
+    
+        try
+        {
+            var defaultResumes = await ResumeService.GetAllAsync();
+            var resume = defaultResumes.FirstOrDefault(r => r.IsDefault)
+                         ?? defaultResumes.FirstOrDefault();
+            var resumeDetail = resume != null
+                ? await ResumeService.GetByIdAsync(resume.Id)
+                : null;
+        
+            appQuestions = await InterviewService.GenerateAsync(new GenerateQuestionsRequest(
+                editingApp.Id,
+                jobDesc,
+                resumeDetail?.Content ?? ""
+            ));
+        
+            if (appQuestions.Count == 0)
+            {
+                errorMessage = "Failed to generate questions. Make sure Ollama is running.";
+            }
+            else
+            {
+                errorMessage = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isGenerating = false;
+            StateHasChanged();
+        }
     }
 
     async Task UpdateQuestionStatus(Guid questionId, string status)

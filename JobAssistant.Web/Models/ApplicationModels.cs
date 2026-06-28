@@ -14,8 +14,9 @@ public record CreateApplicationRequest(string CompanyName, string Position,
     int? AtsScore, string? Notes, DateTimeOffset? AppliedAt, int Priority = 0);
 
 public record UpdateApplicationRequest(string? CompanyName, string? Position,
-    string? JobUrl, string? Source, string? ResumeVersion, string? Status,
-    int? AtsScore, string? Notes, DateTimeOffset? AppliedAt, int? Priority);
+    string? JobUrl, string? JobDescription, string? Source, string? ResumeVersion,
+    string? Status, int? AtsScore, string? Notes, DateTimeOffset? AppliedAt, 
+    int? Priority);
 
 public record DashboardStats(int TotalApplications, int ActiveInterviews,
     int ResponseRate, int RejectedThisMonth, int AppliedThisMonth);

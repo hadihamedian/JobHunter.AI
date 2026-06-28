@@ -11,6 +11,7 @@ JobAssistant.Api/Models/AnalyzeRequest.cs
 JobAssistant.Api/Models/AnalyzeResult.cs
 JobAssistant.Api/Models/ApplicationModels.cs
 JobAssistant.Api/Models/ChatModels.cs
+JobAssistant.Api/Models/InterviewModels.cs
 JobAssistant.Api/Models/ResumeModels.cs
 JobAssistant.Api/Program.cs
 JobAssistant.Api/Properties/launchSettings.json
@@ -18,6 +19,9 @@ JobAssistant.Api/Services/AiAnalyzerService.cs
 JobAssistant.Api/Services/ApplicationRepository.cs
 JobAssistant.Api/Services/CareerChatService.cs
 JobAssistant.Api/Services/DataChatService.cs
+JobAssistant.Api/Services/InterviewBankChatService.cs
+JobAssistant.Api/Services/InterviewGeneratorService.cs
+JobAssistant.Api/Services/InterviewRepository.cs
 JobAssistant.Api/Services/ResumeRecommendationService.cs
 JobAssistant.Api/Services/ResumeRepository.cs
 JobAssistant.slnx
@@ -29,16 +33,19 @@ JobAssistant.Web/Layout/MainLayout.razor.css
 JobAssistant.Web/Layout/NavMenu.razor
 JobAssistant.Web/Layout/NavMenu.razor.css
 JobAssistant.Web/Models/ApplicationModels.cs
+JobAssistant.Web/Models/InterviewModels.cs
 JobAssistant.Web/Models/ResumeModels.cs
 JobAssistant.Web/Pages/Applications.razor
 JobAssistant.Web/Pages/Counter.razor
 JobAssistant.Web/Pages/Home.razor
+JobAssistant.Web/Pages/InterviewBank.razor
 JobAssistant.Web/Pages/NotFound.razor
 JobAssistant.Web/Pages/Resumes.razor
 JobAssistant.Web/Pages/Weather.razor
 JobAssistant.Web/Program.cs
 JobAssistant.Web/Properties/launchSettings.json
 JobAssistant.Web/Services/ApplicationService.cs
+JobAssistant.Web/Services/InterviewService.cs
 JobAssistant.Web/Services/ResumeService.cs
 JobAssistant.Web/wwwroot/css/app.css
 JobAssistant.Web/wwwroot/index.html
@@ -3266,6 +3273,8 @@ namespace JobAssistant.Api.Models;
 
 public record AnalyzeRequest(string ResumeContent, string JobDescription);
 
+public record AnalyzeByIdRequest(Guid ResumeId, string JobDescription);
+
 ================
 File: JobAssistant.Api/Models/AnalyzeResult.cs
 ================
@@ -3303,6 +3312,7 @@ public record ApplicationDetail(
     string CompanyName,
     string Position,
     string? JobUrl,
+    string? JobDescription,
     string Source,
     string? ResumeVersion,
     string Status,
@@ -3331,6 +3341,7 @@ public record UpdateApplicationRequest(
     string? CompanyName,
     string? Position,
     string? JobUrl,
+    string? JobDescription,
     string? Source,
     string? ResumeVersion,
     string? Status,
@@ -3383,6 +3394,46 @@ public record ChatRequest(
 );
 
 public record ChatResponse(string Reply);
+
+================
+File: JobAssistant.Api/Models/InterviewModels.cs
+================
+namespace JobAssistant.Api.Models;
+
+public record InterviewQuestion(
+    Guid Id,
+    Guid ApplicationId,
+    string Question,
+    string QuestionType,
+    string? Hint,
+    string? PersonalNote,
+    string Status,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? UpdatedAt
+);
+
+public record GenerateQuestionsRequest(
+    Guid ApplicationId,
+    string JobDescription,
+    string ResumeContent
+);
+
+public record UpdateQuestionRequest(
+    string? PersonalNote,
+    string? Status
+);
+
+public record InterviewBankChatRequest(
+    string Question,
+    List<InterviewBankChatMessage> History
+);
+
+public record InterviewBankChatMessage(string Role, string Content);
+
+public record InterviewBankChatResponse(
+    string TextAnswer,
+    List<InterviewQuestion>? FilteredQuestions
+);
 
 ================
 File: JobAssistant.Api/Models/ResumeModels.cs
@@ -3464,6 +3515,9 @@ builder.Services.AddScoped<ApplicationRepository>();
 builder.Services.AddScoped<DataChatService>();
 builder.Services.AddScoped<ResumeRepository>();
 builder.Services.AddScoped<ResumeRecommendationService>();
+builder.Services.AddScoped<InterviewRepository>();
+builder.Services.AddScoped<InterviewGeneratorService>();
+builder.Services.AddScoped<InterviewBankChatService>();
 
 var app = builder.Build();
 app.UseCors();
@@ -3475,6 +3529,21 @@ app.MapPost("/api/analyze", async (AnalyzeRequest request, AiAnalyzerService ana
         return Results.BadRequest("Resume and job description are required.");
 
     var result = await analyzer.AnalyzeAsync(request.ResumeContent, request.JobDescription);
+    return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
+});
+
+app.MapPost("/api/analyze-by-id", async (
+    AnalyzeByIdRequest req,
+    ResumeRepository resumeRepo,
+    AiAnalyzerService analyzer) =>
+{
+    if (req.ResumeId == Guid.Empty || string.IsNullOrWhiteSpace(req.JobDescription))
+        return Results.BadRequest("ResumeId and JobDescription are required.");
+
+    var resume = await resumeRepo.GetByIdAsync(req.ResumeId);
+    if (resume is null) return Results.NotFound("Resume not found.");
+
+    var result = await analyzer.AnalyzeAsync(resume.Content, req.JobDescription);
     return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
 });
 
@@ -3537,14 +3606,9 @@ apps.MapPost("/{id:guid}/move-down", async (Guid id, ApplicationRepository repo)
 
 var resumes = app.MapGroup("/api/resumes");
 
+// ✅ route‌های خاص (literal) اول
 resumes.MapGet("/", async (ResumeRepository repo) =>
     Results.Ok(await repo.GetAllAsync()));
-
-resumes.MapGet("/{id:guid}", async (Guid id, ResumeRepository repo) =>
-{
-    var resume = await repo.GetByIdAsync(id);
-    return resume is null ? Results.NotFound() : Results.Ok(resume);
-});
 
 resumes.MapPost("/", async (CreateResumeRequest req, ResumeRepository repo) =>
 {
@@ -3552,18 +3616,6 @@ resumes.MapPost("/", async (CreateResumeRequest req, ResumeRepository repo) =>
         return Results.BadRequest("Name and Content are required.");
     var id = await repo.CreateAsync(req);
     return Results.Created($"/api/resumes/{id}", new { id });
-});
-
-resumes.MapPatch("/{id:guid}", async (Guid id, UpdateResumeRequest req, ResumeRepository repo) =>
-{
-    var ok = await repo.UpdateAsync(id, req);
-    return ok ? Results.NoContent() : Results.NotFound();
-});
-
-resumes.MapDelete("/{id:guid}", async (Guid id, ResumeRepository repo) =>
-{
-    var ok = await repo.DeleteAsync(id);
-    return ok ? Results.NoContent() : Results.NotFound();
 });
 
 resumes.MapPost("/recommend", async (
@@ -3578,7 +3630,74 @@ resumes.MapPost("/recommend", async (
         : Results.Ok(result);
 });
 
+// ✅ route‌های عمومی (parameter) آخر
+resumes.MapGet("/{id:guid}", async (Guid id, ResumeRepository repo) =>
+{
+    var resume = await repo.GetByIdAsync(id);
+    return resume is null ? Results.NotFound() : Results.Ok(resume);
+});
+
+resumes.MapPatch("/{id:guid}", async (Guid id, UpdateResumeRequest req, ResumeRepository repo) =>
+{
+    var ok = await repo.UpdateAsync(id, req);
+    return ok ? Results.NoContent() : Results.NotFound();
+});
+
+resumes.MapDelete("/{id:guid}", async (Guid id, ResumeRepository repo) =>
+{
+    var ok = await repo.DeleteAsync(id);
+    return ok ? Results.NoContent() : Results.NotFound();
+});
+
+
+
+var interviews = app.MapGroup("/api/interviews");
+
+// همه سوالات یه اپلیکیشن خاص
+interviews.MapGet("/application/{applicationId:guid}",
+    async (Guid applicationId, InterviewRepository repo) =>
+        Results.Ok(await repo.GetByApplicationAsync(applicationId)));
+
+// همه سوالات (برای Interview Bank)
+interviews.MapGet("/",
+    async (InterviewRepository repo) =>
+        Results.Ok(await repo.GetAllAsync()));
+
+// Generate سوالات جدید
+interviews.MapPost("/generate",
+    async (GenerateQuestionsRequest req, InterviewGeneratorService svc) =>
+    {
+        if (req.ApplicationId == Guid.Empty)
+            return Results.BadRequest("ApplicationId is required.");
+        var questions = await svc.GenerateAsync(req);
+        return Results.Ok(questions);
+    });
+
+// آپدیت نوت و وضعیت یه سوال
+interviews.MapPatch("/{id:guid}",
+    async (Guid id, UpdateQuestionRequest req, InterviewRepository repo) =>
+    {
+        var ok = await repo.UpdateAsync(id, req);
+        return ok ? Results.NoContent() : Results.NotFound();
+    });
+
+// حذف همه سوالات یه اپلیکیشن (برای regenerate)
+interviews.MapDelete("/application/{applicationId:guid}",
+    async (Guid applicationId, InterviewRepository repo) =>
+    {
+        await repo.DeleteByApplicationAsync(applicationId);
+        return Results.NoContent();
+    });
+
+// Interview Bank Chat
+interviews.MapPost("/chat",
+    async (InterviewBankChatRequest req, InterviewBankChatService svc) =>
+        Results.Ok(await svc.ChatAsync(req)));
+
+
+
 await ResumeRepository.InitDbAsync(dataSource);
+await InterviewRepository.InitDbAsync(dataSource);
 await ApplicationRepository.InitDbAsync(dataSource);
 
 app.Run();
@@ -3704,6 +3823,7 @@ CREATE TABLE IF NOT EXISTS ""Applications"" (
     ""UpdatedAt""    TIMESTAMPTZ
 );
 ALTER TABLE ""Applications"" ADD COLUMN IF NOT EXISTS ""Priority"" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ""Applications"" ADD COLUMN IF NOT EXISTS ""JobDescription"" TEXT;
 ";
         await using var cmd = dataSource.CreateCommand(sql);
         await cmd.ExecuteNonQueryAsync();
@@ -3738,7 +3858,7 @@ FROM ""Applications""";
 
     public async Task<ApplicationDetail?> GetByIdAsync(Guid id)
     {
-        var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""JobUrl"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""Notes"", ""AppliedAt"", ""CreatedAt"", ""UpdatedAt"", ""Priority""
+        var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""JobUrl"", ""JobDescription"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""Notes"", ""AppliedAt"", ""CreatedAt"", ""UpdatedAt"", ""Priority""
 FROM ""Applications"" WHERE ""Id"" = $1";
         await using var cmd = db.CreateCommand(sql);
         cmd.Parameters.AddWithValue(id);
@@ -3748,15 +3868,16 @@ FROM ""Applications"" WHERE ""Id"" = $1";
             return new ApplicationDetail(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
                 reader.IsDBNull(3) ? null : reader.GetString(3),
-                reader.GetString(4),
-                reader.IsDBNull(5) ? null : reader.GetString(5),
-                reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                reader.IsDBNull(8) ? null : reader.GetString(8),
-                reader.IsDBNull(9) ? null : reader.GetDateTime(9),
-                reader.GetDateTime(10),
-                reader.IsDBNull(11) ? null : reader.GetDateTime(11),
-                reader.GetInt32(12)
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetDateTime(10),
+                reader.GetDateTime(11),
+                reader.IsDBNull(12) ? null : reader.GetDateTime(12),
+                reader.GetInt32(13)
             );
         }
         return null;
@@ -3786,19 +3907,21 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING ""Id"";";
 ""CompanyName"" = COALESCE($1, ""CompanyName""),
 ""Position"" = COALESCE($2, ""Position""),
 ""JobUrl"" = $3,
-""Source"" = COALESCE($4, ""Source""),
-""ResumeVersion"" = $5,
-""Status"" = COALESCE($6, ""Status""),
-""AtsScore"" = $7,
-""Notes"" = $8,
-""AppliedAt"" = $9,
-""Priority"" = COALESCE($11, ""Priority""),
+""JobDescription"" = $4,
+""Source"" = COALESCE($5, ""Source""),
+""ResumeVersion"" = $6,
+""Status"" = COALESCE($7, ""Status""),
+""AtsScore"" = $8,
+""Notes"" = $9,
+""AppliedAt"" = $10,
+""Priority"" = COALESCE($12, ""Priority""),
 ""UpdatedAt"" = NOW()
-WHERE ""Id"" = $10";
+WHERE ""Id"" = $11";
         await using var cmd = db.CreateCommand(sql);
         cmd.Parameters.AddWithValue(req.CompanyName ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.Position ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.JobUrl ?? (object)DBNull.Value);
+        cmd.Parameters.AddWithValue(req.JobDescription ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.Source ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.ResumeVersion ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.Status ?? (object)DBNull.Value);
@@ -3846,7 +3969,7 @@ SELECT
     public async Task<List<ApplicationDetail>> GetAllForChatAsync()
     {
         var list = new List<ApplicationDetail>();
-        var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""JobUrl"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""Notes"", ""AppliedAt"", ""CreatedAt"", ""UpdatedAt"", ""Priority""
+        var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""JobUrl"", ""JobDescription"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""Notes"", ""AppliedAt"", ""CreatedAt"", ""UpdatedAt"", ""Priority""
 FROM ""Applications"" ORDER BY ""CreatedAt"" DESC LIMIT 20";
         await using var cmd = db.CreateCommand(sql);
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -3855,15 +3978,16 @@ FROM ""Applications"" ORDER BY ""CreatedAt"" DESC LIMIT 20";
             list.Add(new ApplicationDetail(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
                 reader.IsDBNull(3) ? null : reader.GetString(3),
-                reader.GetString(4),
-                reader.IsDBNull(5) ? null : reader.GetString(5),
-                reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                reader.IsDBNull(8) ? null : reader.GetString(8),
-                reader.IsDBNull(9) ? null : reader.GetDateTime(9),
-                reader.GetDateTime(10),
-                reader.IsDBNull(11) ? null : reader.GetDateTime(11),
-                reader.GetInt32(12)
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetDateTime(10),
+                reader.GetDateTime(11),
+                reader.IsDBNull(12) ? null : reader.GetDateTime(12),
+                reader.GetInt32(13)
             ));
         }
         return list;
@@ -4092,6 +4216,378 @@ Question: {request.Question}";
         public List<string> TableColumns { get; set; } = new();
         public List<List<string>> TableRows { get; set; } = new();
     }
+}
+
+================
+File: JobAssistant.Api/Services/InterviewBankChatService.cs
+================
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using JobAssistant.Api.Models;
+
+namespace JobAssistant.Api.Services;
+
+public class InterviewBankChatService(
+    HttpClient httpClient,
+    IConfiguration configuration,
+    InterviewRepository repository)
+{
+    public async Task<InterviewBankChatResponse> ChatAsync(
+        InterviewBankChatRequest request)
+    {
+        var allQuestions = await repository.GetAllAsync();
+
+        var questionsJson = JsonSerializer.Serialize(
+            allQuestions.Select(q => new
+            {
+                q.Id,
+                q.Question,
+                q.QuestionType,
+                q.Hint,
+                q.Status,
+                q.PersonalNote
+            }),
+            new JsonSerializerOptions { WriteIndented = false });
+
+        var ollamaUrl = configuration["Ollama:Url"]
+            ?? "http://localhost:11434/api/generate";
+        var model = configuration["Ollama:Model"] ?? "llama3.2";
+
+        var historyText = string.Join("\n", request.History
+            .Select(h => $"{h.Role}: {h.Content}"));
+
+        var prompt = $@"You are an interview preparation assistant.
+
+The user has this bank of interview questions:
+{questionsJson}
+
+{(string.IsNullOrEmpty(historyText) ? "" : $"Previous conversation:\n{historyText}\n")}
+User question: {request.Question}
+
+Answer the user's question about their interview questions.
+You can filter, group, explain, or suggest practice strategies.
+
+Return ONLY this JSON object:
+{{
+   ""textAnswer"": ""<your answer, 2-4 sentences>"",
+   ""hasFilteredList"": true or false,
+   ""filteredQuestionIds"": [""<uuid>"", ""<uuid>""]
+}}
+
+If the user asks to see specific questions (by topic, type, status), 
+set hasFilteredList to true and include the IDs of matching questions.
+Otherwise set hasFilteredList to false and filteredQuestionIds to empty array.
+Always answer in the same language the user writes in.";
+
+        var payload = new
+        {
+            model,
+            prompt,
+            stream = false,
+            format = "json",
+            options = new { temperature = 0.2 }
+        };
+
+        var response = await httpClient.PostAsJsonAsync(ollamaUrl, payload);
+        response.EnsureSuccessStatusCode();
+
+        var ollamaResp = await response.Content
+            .ReadFromJsonAsync<OllamaResponse>();
+        if (string.IsNullOrWhiteSpace(ollamaResp?.Response))
+            return new InterviewBankChatResponse("No response from AI.", null);
+
+        try
+        {
+            var jsonOptions = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+            var raw = JsonSerializer.Deserialize<RawChatResult>(
+                ollamaResp.Response, jsonOptions);
+            if (raw == null)
+                return new InterviewBankChatResponse(ollamaResp.Response, null);
+
+            List<InterviewQuestion>? filtered = null;
+            if (raw.HasFilteredList && raw.FilteredQuestionIds.Count > 0)
+            {
+                filtered = allQuestions
+                    .Where(q => raw.FilteredQuestionIds.Contains(q.Id))
+                    .ToList();
+            }
+
+            return new InterviewBankChatResponse(raw.TextAnswer, filtered);
+        }
+        catch
+        {
+            return new InterviewBankChatResponse(ollamaResp.Response, null);
+        }
+    }
+
+    private class OllamaResponse
+    {
+        [JsonPropertyName("response")]
+        public string Response { get; set; } = string.Empty;
+    }
+
+    private class RawChatResult
+    {
+        public string TextAnswer { get; set; } = string.Empty;
+        public bool HasFilteredList { get; set; }
+        public List<Guid> FilteredQuestionIds { get; set; } = new();
+    }
+}
+
+================
+File: JobAssistant.Api/Services/InterviewGeneratorService.cs
+================
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using JobAssistant.Api.Models;
+
+namespace JobAssistant.Api.Services;
+
+public class InterviewGeneratorService(
+    HttpClient httpClient,
+    IConfiguration configuration,
+    InterviewRepository repository)
+{
+    public async Task<List<InterviewQuestion>> GenerateAsync(
+        GenerateQuestionsRequest req)
+    {
+        var ollamaUrl = configuration["Ollama:Url"]
+            ?? "http://localhost:11434/api/generate";
+        var model = configuration["Ollama:Model"] ?? "llama3.2";
+
+        var prompt = $@"You are an expert technical interviewer.
+
+Based on this job description and resume, generate interview questions.
+
+Job Description:
+{req.JobDescription}
+
+Resume:
+{req.ResumeContent}
+
+Generate exactly 10 questions in this mix:
+- 5 Technical questions (specific to the tech stack in the job)
+- 3 Behavioral questions (STAR format situations)
+- 2 Questions the candidate should ask the interviewer
+
+Return ONLY this JSON array, no explanation, no markdown:
+[
+  {{
+     ""question"": ""<the question>"",
+     ""type"": ""Technical"",
+     ""hint"": ""<brief guidance on how to answer this question, 1-2 sentences>""
+  }},
+  {{
+     ""question"": ""<the question>"",
+     ""type"": ""Behavioral"",
+     ""hint"": ""<brief guidance on how to answer>""
+  }},
+  {{
+     ""question"": ""<question to ask interviewer>"",
+     ""type"": ""AskThem"",
+     ""hint"": ""<why this is a good question to ask>""
+  }}
+]
+
+Type must be exactly one of: Technical, Behavioral, AskThem
+Make questions specific to the actual technologies and role mentioned.";
+
+        var payload = new
+        {
+            model,
+            prompt,
+            stream = false,
+            format = "json",
+            options = new { temperature = 0.4 }
+        };
+
+        var response = await httpClient.PostAsJsonAsync(ollamaUrl, payload);
+        response.EnsureSuccessStatusCode();
+
+        var ollamaResp = await response.Content
+            .ReadFromJsonAsync<OllamaResponse>();
+        if (string.IsNullOrWhiteSpace(ollamaResp?.Response)) return new();
+
+        try
+        {
+            var jsonOptions = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+
+            List<RawQuestion>? raw = null;
+
+            try
+            {
+                raw = JsonSerializer.Deserialize<List<RawQuestion>>(
+                    ollamaResp.Response, jsonOptions);
+            }
+            catch
+            {
+                var wrapper = JsonSerializer.Deserialize<QuestionWrapper>(
+                    ollamaResp.Response, jsonOptions);
+                raw = wrapper?.Questions ?? wrapper?.Items;
+            }
+
+            if (raw == null || raw.Count == 0) return new();
+
+            // حذف سوالات قبلی قبل از ذخیره جدید
+            await repository.DeleteByApplicationAsync(req.ApplicationId);
+
+            var toSave = raw.Select(q => (
+                q.Question,
+                q.Type ?? "Technical",
+                q.Hint ?? ""
+            )).ToList();
+
+            await repository.SaveQuestionsAsync(req.ApplicationId, toSave);
+            return await repository.GetByApplicationAsync(req.ApplicationId);
+        }
+        catch
+        {
+            return new();
+        }
+    }
+
+    private class OllamaResponse
+    {
+        [JsonPropertyName("response")]
+        public string Response { get; set; } = string.Empty;
+    }
+
+    private class RawQuestion
+    {
+        public string Question { get; set; } = string.Empty;
+        public string? Type { get; set; }
+        public string? Hint { get; set; }
+    }
+
+    private class QuestionWrapper
+    {
+        public List<RawQuestion>? Questions { get; set; }
+        public List<RawQuestion>? Items { get; set; }
+    }
+}
+
+================
+File: JobAssistant.Api/Services/InterviewRepository.cs
+================
+using Npgsql;
+using JobAssistant.Api.Models;
+
+namespace JobAssistant.Api.Services;
+
+public class InterviewRepository(NpgsqlDataSource db)
+{
+    public static async Task InitDbAsync(NpgsqlDataSource dataSource)
+    {
+        var sql = @"
+CREATE TABLE IF NOT EXISTS ""InterviewQuestions"" (
+    ""Id""              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ""ApplicationId""   UUID NOT NULL,
+    ""Question""        TEXT NOT NULL,
+    ""QuestionType""    TEXT NOT NULL DEFAULT 'Technical',
+    ""Hint""            TEXT,
+    ""PersonalNote""    TEXT,
+    ""Status""          TEXT NOT NULL DEFAULT 'NotPracticed',
+    ""CreatedAt""       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ""UpdatedAt""       TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_interview_questions_app 
+    ON ""InterviewQuestions"" (""ApplicationId"");
+";
+        await using var cmd = dataSource.CreateCommand(sql);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task<List<InterviewQuestion>> GetByApplicationAsync(Guid applicationId)
+    {
+        var list = new List<InterviewQuestion>();
+        var sql = @"SELECT ""Id"", ""ApplicationId"", ""Question"", ""QuestionType"", 
+                           ""Hint"", ""PersonalNote"", ""Status"", ""CreatedAt"", ""UpdatedAt""
+                    FROM ""InterviewQuestions""
+                    WHERE ""ApplicationId"" = $1
+                    ORDER BY ""QuestionType"" ASC, ""CreatedAt"" ASC";
+        await using var cmd = db.CreateCommand(sql);
+        cmd.Parameters.AddWithValue(applicationId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            list.Add(MapRow(reader));
+        return list;
+    }
+
+    public async Task<List<InterviewQuestion>> GetAllAsync()
+    {
+        var list = new List<InterviewQuestion>();
+        var sql = @"SELECT ""Id"", ""ApplicationId"", ""Question"", ""QuestionType"", 
+                           ""Hint"", ""PersonalNote"", ""Status"", ""CreatedAt"", ""UpdatedAt""
+                    FROM ""InterviewQuestions""
+                    ORDER BY ""QuestionType"" ASC, ""CreatedAt"" DESC";
+        await using var cmd = db.CreateCommand(sql);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            list.Add(MapRow(reader));
+        return list;
+    }
+
+    public async Task<List<Guid>> SaveQuestionsAsync(
+        Guid applicationId,
+        List<(string Question, string Type, string Hint)> questions)
+    {
+        var ids = new List<Guid>();
+        foreach (var q in questions)
+        {
+            var sql = @"INSERT INTO ""InterviewQuestions"" 
+                        (""ApplicationId"", ""Question"", ""QuestionType"", ""Hint"")
+                        VALUES ($1, $2, $3, $4) RETURNING ""Id""";
+            await using var cmd = db.CreateCommand(sql);
+            cmd.Parameters.AddWithValue(applicationId);
+            cmd.Parameters.AddWithValue(q.Question);
+            cmd.Parameters.AddWithValue(q.Type);
+            cmd.Parameters.AddWithValue(q.Hint);
+            var id = (Guid)(await cmd.ExecuteScalarAsync())!;
+            ids.Add(id);
+        }
+        return ids;
+    }
+
+    public async Task<bool> UpdateAsync(Guid id, UpdateQuestionRequest req)
+    {
+        var sql = @"UPDATE ""InterviewQuestions"" SET
+                     ""PersonalNote"" = COALESCE($1, ""PersonalNote""),
+                     ""Status""       = COALESCE($2, ""Status""),
+                     ""UpdatedAt""    = NOW()
+                    WHERE ""Id"" = $3";
+        await using var cmd = db.CreateCommand(sql);
+        cmd.Parameters.AddWithValue(req.PersonalNote ?? (object)DBNull.Value);
+        cmd.Parameters.AddWithValue(req.Status ?? (object)DBNull.Value);
+        cmd.Parameters.AddWithValue(id);
+        return await cmd.ExecuteNonQueryAsync() > 0;
+    }
+
+    public async Task<bool> DeleteByApplicationAsync(Guid applicationId)
+    {
+        var sql = @"DELETE FROM ""InterviewQuestions"" WHERE ""ApplicationId"" = $1";
+        await using var cmd = db.CreateCommand(sql);
+        cmd.Parameters.AddWithValue(applicationId);
+        return await cmd.ExecuteNonQueryAsync() > 0;
+    }
+
+    private static InterviewQuestion MapRow(NpgsqlDataReader r) => new(
+        r.GetGuid(0),
+        r.GetGuid(1),
+        r.GetString(2),
+        r.GetString(3),
+        r.IsDBNull(4) ? null : r.GetString(4),
+        r.IsDBNull(5) ? null : r.GetString(5),
+        r.GetString(6),
+        r.GetDateTime(7),
+        r.IsDBNull(8) ? null : r.GetDateTime(8)
+    );
 }
 
 ================
@@ -4414,20 +4910,33 @@ File: JobAssistant.Web/Layout/MainLayout.razor
 ================
 @inherits LayoutComponentBase
 
-<div class="container">
-    <header class="header-nav">
+<div class="app-shell">
+    <aside class="sidebar">
         <div class="logo">
             <div class="logo-dot"></div>
             Job Assistant
         </div>
-        <nav class="top-nav">
-            <NavLink class="nav-btn" href="" Match="NavLinkMatch.All">Analyzer</NavLink>
-            <NavLink class="nav-btn" href="/applications">Dashboard</NavLink>
-            <NavLink class="nav-btn" href="/resumes">Resumes</NavLink>
-        </nav>
-    </header>
-    
-    @Body
+
+        <div class="nav-section">
+            <div class="nav-label">Tools</div>
+            <NavLink class="nav-item" href="" Match="NavLinkMatch.All">
+                <span class="nav-icon">✦</span> Smart analyze
+            </NavLink>
+            <NavLink class="nav-item" href="/applications">
+                <span class="nav-icon">⊞</span> Applications
+            </NavLink>
+            <NavLink class="nav-item" href="/resumes">
+                <span class="nav-icon">📄</span> Resumes
+            </NavLink>
+            <NavLink class="nav-item" href="/interview-bank">
+                <span class="nav-icon">📝</span> Interview Bank
+            </NavLink>
+        </div>
+    </aside>
+
+    <main class="main-content">
+        @Body
+    </main>
 </div>
 
 ================
@@ -4646,8 +5155,8 @@ public record ApplicationSummary(Guid Id, string CompanyName, string Position,
     int? AtsScore, DateTimeOffset? AppliedAt, DateTimeOffset CreatedAt, int Priority);
 
 public record ApplicationDetail(Guid Id, string CompanyName, string Position,
-    string? JobUrl, string Source, string? ResumeVersion, string Status,
-    int? AtsScore, string? Notes, DateTimeOffset? AppliedAt,
+    string? JobUrl, string? JobDescription, string Source, string? ResumeVersion,
+    string Status, int? AtsScore, string? Notes, DateTimeOffset? AppliedAt,
     DateTimeOffset CreatedAt, DateTimeOffset? UpdatedAt, int Priority);
 
 public record CreateApplicationRequest(string CompanyName, string Position,
@@ -4655,8 +5164,9 @@ public record CreateApplicationRequest(string CompanyName, string Position,
     int? AtsScore, string? Notes, DateTimeOffset? AppliedAt, int Priority = 0);
 
 public record UpdateApplicationRequest(string? CompanyName, string? Position,
-    string? JobUrl, string? Source, string? ResumeVersion, string? Status,
-    int? AtsScore, string? Notes, DateTimeOffset? AppliedAt, int? Priority);
+    string? JobUrl, string? JobDescription, string? Source, string? ResumeVersion,
+    string? Status, int? AtsScore, string? Notes, DateTimeOffset? AppliedAt, 
+    int? Priority);
 
 public record DashboardStats(int TotalApplications, int ActiveInterviews,
     int ResponseRate, int RejectedThisMonth, int AppliedThisMonth);
@@ -4668,6 +5178,46 @@ public record DataChatMessage(string Role, string Content);
 public record DataChatResponse(string TextAnswer, DataTable? Table);
 
 public record DataTable(List<string> Columns, List<List<string>> Rows);
+
+================
+File: JobAssistant.Web/Models/InterviewModels.cs
+================
+namespace JobAssistant.Web.Models;
+
+public record InterviewQuestion(
+    Guid Id,
+    Guid ApplicationId,
+    string Question,
+    string QuestionType,
+    string? Hint,
+    string? PersonalNote,
+    string Status,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? UpdatedAt
+);
+
+public record UpdateQuestionRequest(
+    string? PersonalNote,
+    string? Status
+);
+
+public record GenerateQuestionsRequest(
+    Guid ApplicationId,
+    string JobDescription,
+    string ResumeContent
+);
+
+public record InterviewBankChatRequest(
+    string Question,
+    List<InterviewBankChatMessage> History
+);
+
+public record InterviewBankChatMessage(string Role, string Content);
+
+public record InterviewBankChatResponse(
+    string TextAnswer,
+    List<InterviewQuestion>? FilteredQuestions
+);
 
 ================
 File: JobAssistant.Web/Models/ResumeModels.cs
@@ -4728,6 +5278,8 @@ File: JobAssistant.Web/Pages/Applications.razor
 @using JobAssistant.Web.Models
 @using JobAssistant.Web.Services
 @inject ApplicationService AppService
+@inject InterviewService InterviewService
+@inject ResumeService ResumeService
 
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
     <h2>Applications</h2>
@@ -4927,61 +5479,149 @@ else
 @if (showEditModal && editingApp is not null)
 {
     <div class="modal-overlay" @onclick="() => showEditModal = false">
-        <div class="modal" @onclick:stopPropagation="true">
+        <div class="modal" style="width: 600px;" @onclick:stopPropagation="true">
             <div class="modal-title">Edit Application</div>
 
-            <div class="form-group">
-                <label class="form-label">Company Name</label>
-                <input class="form-input" @bind="editCompanyName" />
-            </div>
-
-            <div class="form-group">
-                <label class="form-label">Position</label>
-                <input class="form-input" @bind="editPosition" />
-            </div>
-
-            <div class="form-group">
-                <label class="form-label">Status</label>
-                <select class="form-select" @bind="editStatus">
-                    <option value="Saved">Saved</option>
-                    <option value="Applied">Applied</option>
-                    <option value="HRInterview">HR Interview</option>
-                    <option value="TechnicalInterview">Technical Interview</option>
-                    <option value="FinalInterview">Final Interview</option>
-                    <option value="Offer">Offer 🎉</option>
-                    <option value="Rejected">Rejected</option>
-                </select>
-            </div>
-
-            <div class="form-group">
-                <label class="form-label">Applied date</label>
-                <input type="date" class="form-input"
-                       value="@(editAppliedAt?.ToString("yyyy-MM-dd") ?? "")"
-                       @onchange="OnAppliedAtChanged" />
-            </div>
-
-            <div class="form-group">
-                <label class="form-label">Job posting URL</label>
-                <input type="url" class="form-input"
-                       placeholder="https://..."
-                       @bind="editJobUrl" />
-            </div>
-
-            <div class="form-group">
-                <label class="form-label">Notes</label>
-                <textarea class="form-textarea note-textarea"
-                          placeholder="Interview notes, salary, recruiter name, questions asked..."
-                          @bind="editNotes"></textarea>
-            </div>
-
-            <div class="modal-actions">
-                <button class="btn-cancel" @onclick="() => showEditModal = false">
-                    Cancel
+            <!-- Tab bar -->
+            <div class="modal-tabs">
+                <button class="modal-tab @(activeModalTab == "details" ? "modal-tab-active" : "")"
+                        @onclick='() => activeModalTab = "details"'>
+                    Details
                 </button>
-                <button class="btn-primary" @onclick="SaveEdit" disabled="@isSaving">
-                    @(isSaving ? "Saving..." : "Save changes")
+                <button class="modal-tab @(activeModalTab == "interview" ? "modal-tab-active" : "")"
+                        @onclick='() => activeModalTab = "interview"'>
+                    Interview Prep
+                    @if (appQuestions.Count > 0)
+                    {
+                        <span class="tab-count">@appQuestions.Count</span>
+                    }
                 </button>
             </div>
+
+            @if (activeModalTab == "details")
+            {
+                <!-- Details tab -->
+                <div class="form-group">
+                    <label class="form-label">Company Name</label>
+                    <input class="form-input" @bind="editCompanyName" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Job Description</label>
+                    <textarea class="form-textarea" 
+                      placeholder="Paste the full job description here..."
+                      style="min-height: 120px;"
+                      @bind="editJobDescription"></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Position</label>
+                    <input class="form-input" @bind="editPosition" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Status</label>
+                    <select class="form-select" @bind="editStatus">
+                        <option value="Saved">Saved</option>
+                        <option value="Applied">Applied</option>
+                        <option value="HRInterview">HR Interview</option>
+                        <option value="TechnicalInterview">Technical Interview</option>
+                        <option value="FinalInterview">Final Interview</option>
+                        <option value="Offer">Offer 🎉</option>
+                        <option value="Rejected">Rejected</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Applied date</label>
+                    <input type="date" class="form-input"
+                           value="@(editAppliedAt?.ToString("yyyy-MM-dd") ?? "")"
+                           @onchange="OnAppliedAtChanged" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Job posting URL</label>
+                    <input type="url" class="form-input"
+                           placeholder="https://..."
+                           @bind="editJobUrl" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Notes</label>
+                    <textarea class="form-textarea note-textarea"
+                              placeholder="Interview notes, salary, recruiter name, questions asked..."
+                              @bind="editNotes"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-cancel" @onclick="() => showEditModal = false">
+                        Cancel
+                    </button>
+                    <button class="btn-primary" @onclick="SaveEdit" disabled="@isSaving">
+                        @(isSaving ? "Saving..." : "Save changes")
+                    </button>
+                </div>
+            }
+            else
+            {
+                <!-- Interview Prep tab -->
+                <div class="interview-tab-content">
+                    @if (isLoadingQuestions)
+                    {
+                        <div style="color:#555560;font-size:12px;padding:12px 0">Loading...</div>
+                    }
+                    else if (appQuestions.Count == 0)
+                    {
+                        <div style="text-align:center;padding:20px 0">
+                            <div style="color:#555560;font-size:12px;margin-bottom:12px">
+                                No questions yet. Generate questions based on this job.
+                            </div>
+                            <button class="btn-primary" @onclick="GenerateQuestions"
+                                    disabled="@isGenerating">
+                                @(isGenerating ? "Generating..." : "✦ Generate questions")
+                            </button>
+                            @if (!string.IsNullOrEmpty(errorMessage))
+                            {
+                                <div class="error" style="margin-top:12px;font-size:12px">@errorMessage</div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                            <div style="font-size:11px;color:#555560">
+                                @appQuestions.Count questions generated
+                            </div>
+                            <button class="ca-btn" @onclick="GenerateQuestions" disabled="@isGenerating">
+                                @(isGenerating ? "Regenerating..." : "↺ Regenerate")
+                            </button>
+                        </div>
+
+                        <div style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto">
+                            @foreach (var q in appQuestions)
+                            {
+                                <div class="question-card-mini">
+                                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                                        <span class="question-type-badge qtype-@q.QuestionType.ToLower()">
+                                            @GetTypeLabel(q.QuestionType)
+                                        </span>
+                                        <select class="status-select status-@q.Status.ToLower()"
+                                                style="margin-left:auto"
+                                                value="@q.Status"
+                                                @onchange="e => UpdateQuestionStatus(q.Id, e.Value?.ToString() ?? q.Status)">
+                                            <option value="NotPracticed">Not practiced</option>
+                                            <option value="NeedsWork">Needs work</option>
+                                            <option value="Practiced">Practiced ✓</option>
+                                        </select>
+                                    </div>
+                                    <div style="font-size:12px;color:#e8e8ea;line-height:1.5">
+                                        @q.Question
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(q.Hint))
+                                    {
+                                        <div style="font-size:11px;color:#555560;margin-top:4px">
+                                            💡 @q.Hint
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
         </div>
     </div>
 }
@@ -4995,7 +5635,9 @@ else
     string chatInput = "";
     bool isChatLoading = false;
     bool showAddDialog = false;
-
+    string editJobDescription = "";
+    string? errorMessage = null;
+    
     class ApplicationFormModel
     {
         public string CompanyName { get; set; } = "";
@@ -5016,6 +5658,12 @@ else
     string editJobUrl = "";
     DateTimeOffset? editAppliedAt = null;
     bool isSaving = false;
+
+    // Interview tab
+    string activeModalTab = "details";
+    List<InterviewQuestion> appQuestions = new();
+    bool isGenerating = false;
+    bool isLoadingQuestions = false;
 
     IEnumerable<ApplicationSummary> filteredApps => activeFilter switch
     {
@@ -5073,7 +5721,10 @@ else
             editStatus = editingApp.Status;
             editJobUrl = editingApp.JobUrl ?? "";
             editAppliedAt = editingApp.AppliedAt;
+            activeModalTab = "details";
+            await LoadAppQuestions(id);
             showEditModal = true;
+            editJobDescription = editingApp.JobDescription ?? "";
         }
     }
 
@@ -5092,6 +5743,7 @@ else
             string.IsNullOrWhiteSpace(editCompanyName) ? null : editCompanyName,
             string.IsNullOrWhiteSpace(editPosition) ? null : editPosition,
             string.IsNullOrWhiteSpace(editJobUrl) ? null : editJobUrl,
+            string.IsNullOrWhiteSpace(editJobDescription) ? null : editJobDescription,
             null, null,
             editStatus,
             null,
@@ -5116,6 +5768,87 @@ else
         await AppService.MoveDownAsync(id);
         await LoadData();
     }
+
+    async Task LoadAppQuestions(Guid applicationId)
+    {
+        isLoadingQuestions = true;
+        appQuestions = await InterviewService.GetByApplicationAsync(applicationId);
+        isLoadingQuestions = false;
+    }
+
+    async Task GenerateQuestions()
+    {
+        if (editingApp == null) return;
+    
+        // از editJobDescription استفاده کن (نه editingApp.JobDescription)
+        var jobDesc = editJobDescription;
+    
+        if (string.IsNullOrWhiteSpace(jobDesc))
+        {
+            // نمایش پیام خطا
+            errorMessage = "Please fill in the Job Description in the Details tab first.";
+            activeModalTab = "details";
+            StateHasChanged();
+            return;
+        }
+    
+        isGenerating = true;
+        StateHasChanged();
+    
+        try
+        {
+            var defaultResumes = await ResumeService.GetAllAsync();
+            var resume = defaultResumes.FirstOrDefault(r => r.IsDefault)
+                         ?? defaultResumes.FirstOrDefault();
+            var resumeDetail = resume != null
+                ? await ResumeService.GetByIdAsync(resume.Id)
+                : null;
+        
+            appQuestions = await InterviewService.GenerateAsync(new GenerateQuestionsRequest(
+                editingApp.Id,
+                jobDesc,
+                resumeDetail?.Content ?? ""
+            ));
+        
+            if (appQuestions.Count == 0)
+            {
+                errorMessage = "Failed to generate questions. Make sure Ollama is running.";
+            }
+            else
+            {
+                errorMessage = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isGenerating = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task UpdateQuestionStatus(Guid questionId, string status)
+    {
+        await InterviewService.UpdateAsync(questionId,
+            new UpdateQuestionRequest(null, status));
+        var q = appQuestions.FirstOrDefault(x => x.Id == questionId);
+        if (q != null)
+        {
+            var idx = appQuestions.IndexOf(q);
+            appQuestions[idx] = q with { Status = status };
+        }
+    }
+
+    string GetTypeLabel(string type) => type switch
+    {
+        "Technical"  => "Technical",
+        "Behavioral" => "Behavioral",
+        "AskThem"    => "Ask them",
+        _            => type
+    };
 
     async Task SendChatMessage()
     {
@@ -5190,122 +5923,487 @@ File: JobAssistant.Web/Pages/Home.razor
 ================
 @page "/"
 @inject HttpClient Http
+@inject ResumeService ResumeService
+@using JobAssistant.Web.Models
+@using JobAssistant.Web.Services
 @using Microsoft.AspNetCore.Components.Web
 
-<div class="grid-2">
+<!-- Job Description Panel -->
+<div class="analyze-grid">
     <div class="panel">
-        <div class="panel-title">Job Description</div>
-        <textarea @bind="jobDescription" placeholder="Paste job description here..."></textarea>
+        <div class="panel-title">📋 Job description</div>
+        <textarea class="analyze-textarea"
+                  placeholder="Paste the job posting here..."
+                  @bind="jobDescription"
+                  rows="8"></textarea>
     </div>
+
     <div class="panel">
-        <div class="panel-title">Your Resume</div>
-        <textarea @bind="resumeContent" placeholder="Paste your resume content here..."></textarea>
+        <div class="panel-title">📄 Your resume</div>
+
+        @if (isLoadingResumes)
+        {
+            <div style="color:#555560;font-size:12px;padding:8px 0">Loading resumes...</div>
+        }
+        else if (resumes.Count == 0)
+        {
+            <div class="no-resumes">
+                <div style="font-size:13px;color:#555560;margin-bottom:10px">
+                    No resumes yet.
+                </div>
+                <a href="/resumes" class="btn-primary" style="text-decoration:none;display:inline-flex">
+                    + Add your first resume
+                </a>
+            </div>
+        }
+        else
+        {
+            <div class="resume-select-list">
+                @foreach (var resume in resumes)
+                {
+                    <div class="resume-option @(selectedResumeId == resume.Id ? "resume-option-selected" : "")"
+                        @onclick="() => selectedResumeId = resume.Id">
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <div class="resume-option-dot @(selectedResumeId == resume.Id ? "resume-option-dot-active" : "")"></div>
+                            <div>
+                                <div class="resume-option-name">
+                                    @resume.Name
+                                    @if (resume.IsDefault)
+                                    {
+                                        <span class="default-badge" style="margin-left:6px">Default</span>
+                                    }
+                                </div>
+                                <div class="resume-option-meta">@resume.WordCount words · @resume.CreatedAt.ToString("MMM d")</div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <a href="/resumes" style="font-size:11px;color:#6366f1;text-decoration:none;display:block;margin-top:10px">
+                Manage resumes →
+            </a>
+        }
+
+        <button class="btn-analyze"
+                @onclick="Analyze"
+                disabled="@(isAnalyzing || selectedResumeId == Guid.Empty || string.IsNullOrWhiteSpace(jobDescription))">
+            @(isAnalyzing ? "Analyzing..." : "✦ Analyze now")
+        </button>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="error">@errorMessage</div>
+        }
     </div>
 </div>
 
-<button class="btn-analyze" @onclick="AnalyzeAsync" disabled="@isLoading">
-    @(isLoading ? "Analyzing..." : "Analyze now")
-</button>
-
-@if (!string.IsNullOrEmpty(errorMessage))
-{
-    <div class="error">@errorMessage</div>
-}
-
-@if (isLoading)
-{
-    <div class="loading">Analyzing resume against job description via Ollama...</div>
-}
-else if (result != null)
+<!-- Result -->
+@if (result != null)
 {
     <div class="result-panel">
-        <div>
-            <div class="score">@result.AtsScore%</div>
-            <div class="score-label">ATS MATCH SCORE</div>
+        <div class="result-header">
+            <div style="font-size:13px;font-weight:500;color:#e8e8ea">Analysis result</div>
+            <div style="text-align:right">
+                <div style="font-size:10px;color:#555560;margin-bottom:2px">ATS score</div>
+                <div class="score">@result.AtsScore<span style="font-size:14px;color:#555560">/100</span></div>
+            </div>
         </div>
 
         <div class="result-grid">
             <div class="result-card">
-                <div class="result-card-title">MATCHING SKILLS</div>
-                @foreach (var skill in result.MatchingSkills ?? new())
+                <div class="result-card-title">You have these ✓</div>
+                @foreach (var skill in result.MatchingSkills)
                 {
                     <span class="chip chip-have">@skill</span>
                 }
             </div>
             <div class="result-card">
-                <div class="result-card-title">MISSING SKILLS</div>
-                @foreach (var skill in result.MissingSkills ?? new())
-                {
-                    <span class="chip chip-missing">@skill</span>
-                }
-            </div>
-            <div class="result-card">
-                <div class="result-card-title">CRITICAL MISSING</div>
-                @foreach (var skill in result.CriticalMissingSkills ?? new())
+                <div class="result-card-title">Critical gaps</div>
+                @foreach (var skill in result.CriticalMissingSkills)
                 {
                     <span class="chip chip-critical">@skill</span>
                 }
             </div>
+            <div class="result-card">
+                <div class="result-card-title">Add to resume</div>
+                @foreach (var skill in result.MissingSkills.Take(5))
+                {
+                    <span class="chip chip-improve">@skill</span>
+                }
+            </div>
         </div>
 
-        <div class="suggestions">
-            <div class="suggestion-title">SUGGESTIONS FOR IMPROVEMENT</div>
-            @foreach (var suggestion in result.Suggestions ?? new())
-            {
-                <div class="suggestion-item">
-                    <span class="suggestion-dot">•</span>
-                    <span>@suggestion</span>
-                </div>
-            }
-        </div>
-    </div>
+        @if (result.Suggestions.Any())
+        {
+            <div class="suggestions">
+                <div class="suggestion-title">💡 Suggestions</div>
+                @foreach (var s in result.Suggestions)
+                {
+                    <div class="suggestion-item">
+                        <span class="suggestion-dot">·</span>
+                        <span>@s</span>
+                    </div>
+                }
+            </div>
+        }
 
-    <div class="chat-panel">
-        <div class="panel-title">💬 Ask about this job</div>
-        
-        <div class="chat-messages" id="chat-messages">
-            @if (chatHistory.Count == 0)
+        <!-- Career Chat -->
+        <div class="chat-section" style="margin-top:16px">
+            <div class="chat-header">
+                <span style="color:#6366f1">💬</span>
+                <div style="font-size:12px;font-weight:500;color:#e8e8ea">Ask about this job</div>
+                <span class="chat-badge">AI powered</span>
+            </div>
+
+            @if (chatMessages.Count == 0)
             {
-                <div class="chat-empty">
-                    Ask me anything about this job and your resume...
-                </div>
                 <div class="chat-suggestions">
-                    <button class="chat-suggestion-btn" @onclick='() => QuickAsk("What should I learn first to close my skill gaps?")'>
+                    <button class="chat-suggestion-chip" @onclick='() => QuickAsk("What should I learn first to close my skill gaps?")'>
                         What should I learn first?
                     </button>
-                    <button class="chat-suggestion-btn" @onclick='() => QuickAsk("Why is my ATS score not higher?")'>
+                    <button class="chat-suggestion-chip" @onclick='() => QuickAsk("Why is my ATS score not higher?")'>
                         Why is my score not higher?
                     </button>
-                    <button class="chat-suggestion-btn" @onclick='() => QuickAsk("Am I ready to apply for this job?")'>
+                    <button class="chat-suggestion-chip" @onclick='() => QuickAsk("Am I ready to apply for this job?")'>
                         Am I ready to apply?
                     </button>
                 </div>
             }
-            
-            @foreach (var msg in chatHistory)
+
+            <div class="chat-messages">
+                @foreach (var msg in chatMessages)
+                {
+                    @if (msg.Role == "user")
+                    {
+                        <div class="chat-msg-user">@msg.Content</div>
+                    }
+                    else
+                    {
+                        <div class="chat-msg-ai">
+                            <div class="chat-msg-ai-text">@msg.Content</div>
+                        </div>
+                    }
+                }
+                @if (isChatLoading)
+                {
+                    <div class="chat-msg-ai">
+                        <div class="chat-msg-ai-text chat-loading-dots">...</div>
+                    </div>
+                }
+            </div>
+
+            <div class="chat-input-row">
+                <input class="chat-input"
+                       placeholder="Ask about this job..."
+                       @bind="chatInput"
+                       @bind:event="oninput"
+                       @onkeydown="HandleKeyDown" />
+                <button class="chat-send-btn"
+                        @onclick="SendChatMessage"
+                        disabled="@(isChatLoading || string.IsNullOrWhiteSpace(chatInput))">
+                    Send
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    // Resume selection
+    List<ResumeSummary> resumes = new();
+    Guid selectedResumeId = Guid.Empty;
+    bool isLoadingResumes = true;
+
+    // Analysis
+    string jobDescription = "";
+    AnalyzeResult? result = null;
+    bool isAnalyzing = false;
+    string? errorMessage = null;
+
+    // Chat
+    List<(string Role, string Content)> chatMessages = new();
+    string chatInput = "";
+    bool isChatLoading = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        resumes = await ResumeService.GetAllAsync();
+
+        // default resume رو انتخاب کن
+        var defaultResume = resumes.FirstOrDefault(r => r.IsDefault);
+        if (defaultResume != null)
+            selectedResumeId = defaultResume.Id;
+        else if (resumes.Count > 0)
+            selectedResumeId = resumes[0].Id;
+
+        isLoadingResumes = false;
+    }
+
+    async Task Analyze()
+    {
+        if (selectedResumeId == Guid.Empty || string.IsNullOrWhiteSpace(jobDescription))
+            return;
+
+        isAnalyzing = true;
+        errorMessage = null;
+        result = null;
+        chatMessages.Clear();
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/analyze-by-id", new
             {
-                <div class="chat-msg @(msg.Role == "user" ? "chat-msg-user" : "chat-msg-assistant")" dir="auto">
-                    @msg.Content
-                </div>
+                ResumeId = selectedResumeId,
+                JobDescription = jobDescription
+            });
+
+            if (response.IsSuccessStatusCode)
+                result = await response.Content.ReadFromJsonAsync<AnalyzeResult>();
+            else
+                errorMessage = "Analysis failed. Please try again.";
+        }
+        catch
+        {
+            errorMessage = "Could not connect to the server.";
+        }
+
+        isAnalyzing = false;
+    }
+
+    string BuildAnalysisSummary()
+    {
+        if (result == null) return "";
+        return $"ATS Score: {result.AtsScore}/100. " +
+               $"Matching: {string.Join(", ", result.MatchingSkills)}. " +
+               $"Missing: {string.Join(", ", result.MissingSkills)}. " +
+               $"Critical gaps: {string.Join(", ", result.CriticalMissingSkills)}.";
+    }
+
+    async Task SendChatMessage()
+    {
+        if (string.IsNullOrWhiteSpace(chatInput) || isChatLoading) return;
+
+        var question = chatInput.Trim();
+        chatInput = "";
+        chatMessages.Add(("user", question));
+        isChatLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var selectedResume = resumes.FirstOrDefault(r => r.Id == selectedResumeId);
+            var resumeDetail = selectedResume != null
+                ? await ResumeService.GetByIdAsync(selectedResumeId)
+                : null;
+
+            var payload = new
+            {
+                ResumeContent = resumeDetail?.Content ?? "",
+                JobDescription = jobDescription,
+                AnalysisSummary = BuildAnalysisSummary(),
+                History = chatMessages.SkipLast(1)
+                    .Select(m => new { Role = m.Role, Content = m.Content })
+                    .ToList(),
+                UserMessage = question
+            };
+
+            var response = await Http.PostAsJsonAsync("/api/chat", payload);
+            if (response.IsSuccessStatusCode)
+            {
+                var chatResponse = await response.Content
+                    .ReadFromJsonAsync<ChatResponse>();
+                chatMessages.Add(("assistant", chatResponse?.Reply ?? ""));
             }
-            
+        }
+        catch { }
+
+        isChatLoading = false;
+    }
+
+    async Task QuickAsk(string question)
+    {
+        chatInput = question;
+        await SendChatMessage();
+    }
+
+    async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await SendChatMessage();
+    }
+
+    // local records برای deserialize
+    record AnalyzeResult(
+        int AtsScore,
+        List<string> MatchingSkills,
+        List<string> MissingSkills,
+        List<string> CriticalMissingSkills,
+        List<string> Suggestions);
+
+    record ChatResponse(string Reply);
+}
+
+================
+File: JobAssistant.Web/Pages/InterviewBank.razor
+================
+@page "/interview-bank"
+@using JobAssistant.Web.Models
+@using JobAssistant.Web.Services
+@inject InterviewService InterviewService
+
+<div class="page-header">
+    <h1 class="page-title">Interview Bank</h1>
+    <div style="font-size:12px;color:#555560">@questions.Count questions across all applications</div>
+</div>
+
+@if (isLoading)
+{
+    <div class="loading">Loading questions...</div>
+}
+else
+{
+    <!-- Filter chips -->
+    <div class="filter-row" style="margin-bottom:16px">
+        <button class="fc @(typeFilter == "All" ? "fc-active" : "")"
+                @onclick='() => typeFilter = "All"'>All</button>
+        <button class="fc @(typeFilter == "Technical" ? "fc-active" : "")"
+                @onclick='() => typeFilter = "Technical"'>Technical</button>
+        <button class="fc @(typeFilter == "Behavioral" ? "fc-active" : "")"
+                @onclick='() => typeFilter = "Behavioral"'>Behavioral</button>
+        <button class="fc @(typeFilter == "AskThem" ? "fc-active" : "")"
+                @onclick='() => typeFilter = "AskThem"'>Ask them</button>
+        <div style="margin-left:auto;display:flex;gap:6px">
+            <button class="fc @(statusFilter == "All" ? "fc-active" : "")"
+                    @onclick='() => statusFilter = "All"'>All status</button>
+            <button class="fc @(statusFilter == "NotPracticed" ? "fc-active" : "")"
+                    @onclick='() => statusFilter = "NotPracticed"'>Not practiced</button>
+            <button class="fc @(statusFilter == "NeedsWork" ? "fc-active" : "")"
+                    @onclick='() => statusFilter = "NeedsWork"'>Needs work</button>
+            <button class="fc @(statusFilter == "Practiced" ? "fc-active" : "")"
+                    @onclick='() => statusFilter = "Practiced"'>Practiced</button>
+        </div>
+    </div>
+
+    <!-- Questions list -->
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+        @foreach (var q in FilteredQuestions)
+        {
+            <div class="question-card">
+                <div class="question-card-header">
+                    <span class="question-type-badge qtype-@q.QuestionType.ToLower()">
+                        @GetTypeLabel(q.QuestionType)
+                    </span>
+                    <select class="status-select status-@q.Status.ToLower()"
+                            value="@q.Status"
+                            @onchange="e => UpdateStatus(q.Id, e.Value?.ToString() ?? q.Status)">
+                        <option value="NotPracticed">Not practiced</option>
+                        <option value="NeedsWork">Needs work</option>
+                        <option value="Practiced">Practiced ✓</option>
+                    </select>
+                </div>
+
+                <div class="question-text">@q.Question</div>
+
+                @if (!string.IsNullOrEmpty(q.Hint))
+                {
+                    <div class="question-hint">
+                        <span style="color:#6366f1">💡</span> @q.Hint
+                    </div>
+                }
+
+                <div class="question-note-row">
+                    <textarea class="question-note-input"
+                              placeholder="Add your personal note..."
+                              value="@(q.PersonalNote ?? string.Empty)"
+                              @onchange="e => UpdateNote(q.Id, e.Value?.ToString() ?? string.Empty)">
+                    </textarea>
+                </div>
+            </div>
+        }
+
+        @if (FilteredQuestions.Count == 0)
+        {
+            <div class="loading">No questions match your filters.</div>
+        }
+    </div>
+
+    <!-- Interview Bank Chat -->
+    <div class="chat-section">
+        <div class="chat-header">
+            <span style="color:#6366f1;font-size:14px">💬</span>
+            <div style="font-size:12px;font-weight:500;color:#e8e8ea">
+                Ask about your questions
+            </div>
+            <span class="chat-badge">AI powered</span>
+        </div>
+
+        @if (chatMessages.Count == 0)
+        {
+            <div class="chat-suggestions">
+                <button class="chat-suggestion-chip"
+                        @onclick='() => QuickAsk("Show me all EF Core questions")'>
+                    EF Core questions
+                </button>
+                <button class="chat-suggestion-chip"
+                        @onclick='() => QuickAsk("Which questions do I still need to practice?")'>
+                    Not practiced yet
+                </button>
+                <button class="chat-suggestion-chip"
+                        @onclick='() => QuickAsk("What topics come up most often?")'>
+                    Most common topics
+                </button>
+            </div>
+        }
+
+        <div class="chat-messages">
+            @foreach (var msg in chatMessages)
+            {
+                @if (msg.Role == "user")
+                {
+                    <div class="chat-msg-user">@msg.TextContent</div>
+                }
+                else
+                {
+                    <div class="chat-msg-ai">
+                        <div class="chat-msg-ai-text">@msg.TextContent</div>
+                        @if (msg.FilteredQuestions != null && msg.FilteredQuestions.Count > 0)
+                        {
+                            <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
+                                @foreach (var q in msg.FilteredQuestions)
+                                {
+                                    <div class="chat-mini-result">
+                                        <span class="question-type-badge qtype-@q.QuestionType.ToLower()"
+                                              style="font-size:9px;padding:1px 6px">
+                                            @GetTypeLabel(q.QuestionType)
+                                        </span>
+                                        <span style="font-size:12px;color:#c8c8cc;margin-left:6px">
+                                            @q.Question
+                                        </span>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            }
             @if (isChatLoading)
             {
-                <div class="chat-msg chat-msg-assistant chat-loading">
-                    <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
+                <div class="chat-msg-ai">
+                    <div class="chat-msg-ai-text chat-loading-dots">...</div>
                 </div>
             }
         </div>
-        
+
         <div class="chat-input-row">
-            <input 
-                class="chat-input" 
-                placeholder="Ask about this job..." 
-                @bind="currentMessage"
-                @bind:event="oninput"
-                @onkeydown="HandleKeyDown"
-                dir="auto"/>
-            <button class="chat-send-btn" @onclick="SendMessage" disabled="@(isChatLoading || string.IsNullOrWhiteSpace(currentMessage))">
+            <input class="chat-input"
+                   placeholder="Ask about your interview questions..."
+                   @bind="chatInput"
+                   @bind:event="oninput"
+                   @onkeydown="HandleKeyDown" />
+            <button class="chat-send-btn"
+                    @onclick="SendChat"
+                    disabled="@(isChatLoading || string.IsNullOrWhiteSpace(chatInput))">
                 Send
             </button>
         </div>
@@ -5313,119 +6411,93 @@ else if (result != null)
 }
 
 @code {
-    private string jobDescription = "";
-    private string resumeContent = "";
-    private AnalyzeResult? result = null;
-    private bool isLoading = false;
-    private string? errorMessage = null;
+    List<InterviewQuestion> questions = new();
+    string typeFilter = "All";
+    string statusFilter = "All";
+    bool isLoading = true;
 
-    // Chat State
-    List<ChatMessage> chatHistory = new();
-    string currentMessage = "";
+    // Chat
+    List<ChatMsg> chatMessages = new();
+    string chatInput = "";
     bool isChatLoading = false;
 
-    private async Task AnalyzeAsync()
+    record ChatMsg(
+        string Role,
+        string TextContent,
+        List<InterviewQuestion>? FilteredQuestions = null);
+
+    List<InterviewQuestion> FilteredQuestions => questions
+        .Where(q => typeFilter == "All" || q.QuestionType == typeFilter)
+        .Where(q => statusFilter == "All" || q.Status == statusFilter)
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
     {
-        if (string.IsNullOrWhiteSpace(jobDescription) || string.IsNullOrWhiteSpace(resumeContent))
-        {
-            errorMessage = "Please provide both Job Description and Resume.";
-            return;
-        }
+        questions = await InterviewService.GetAllAsync();
+        isLoading = false;
+    }
 
-        isLoading = true;
-        errorMessage = null;
-        result = null;
-        chatHistory.Clear(); // ریست کردن چت با آنالیز جدید
+    string GetTypeLabel(string type) => type switch
+    {
+        "Technical"  => "Technical",
+        "Behavioral" => "Behavioral",
+        "AskThem"    => "Ask them",
+        _            => type
+    };
 
-        try
+    async Task UpdateStatus(Guid id, string status)
+    {
+        await InterviewService.UpdateAsync(id, new UpdateQuestionRequest(null, status));
+        var q = questions.FirstOrDefault(x => x.Id == id);
+        if (q != null)
         {
-            var request = new { ResumeContent = resumeContent, JobDescription = jobDescription };
-            var response = await Http.PostAsJsonAsync("/api/analyze", request);
-            
-            if (response.IsSuccessStatusCode)
-            {
-                result = await response.Content.ReadFromJsonAsync<AnalyzeResult>();
-            }
-            else
-            {
-                errorMessage = "Failed to analyze. Ensure API and Ollama are running.";
-            }
-        }
-        catch (Exception ex)
-        {
-            errorMessage = $"Error: {ex.Message}";
-        }
-        finally
-        {
-            isLoading = false;
+            var idx = questions.IndexOf(q);
+            questions[idx] = q with { Status = status };
         }
     }
 
-    async Task SendMessage()
+    async Task UpdateNote(Guid id, string note)
     {
-        if (string.IsNullOrWhiteSpace(currentMessage) || isChatLoading) return;
+        await InterviewService.UpdateAsync(id,
+            new UpdateQuestionRequest(note, null));
+    }
 
-        var userMsg = currentMessage.Trim();
-        currentMessage = "";
-        
-        chatHistory.Add(new ChatMessage("user", userMsg));
+    async Task SendChat()
+    {
+        if (string.IsNullOrWhiteSpace(chatInput) || isChatLoading) return;
+        var question = chatInput.Trim();
+        chatInput = "";
+        chatMessages.Add(new ChatMsg("user", question));
         isChatLoading = true;
         StateHasChanged();
 
-        var request = new
-        {
-            ResumeContent = resumeContent,
-            JobDescription = jobDescription,
-            AnalysisSummary = BuildAnalysisSummary(),
-            History = chatHistory.SkipLast(1).ToList(),
-            UserMessage = userMsg
-        };
+        var history = chatMessages.SkipLast(1)
+            .Select(m => new InterviewBankChatMessage(m.Role, m.TextContent))
+            .ToList();
 
-        var response = await Http.PostAsJsonAsync("/api/chat", request);
-        if (response.IsSuccessStatusCode)
-        {
-            var chatRes = await response.Content.ReadFromJsonAsync<ChatResponse>();
-            chatHistory.Add(new ChatMessage("assistant", chatRes?.Reply ?? ""));
-        }
-        else
-        {
-            chatHistory.Add(new ChatMessage("assistant", "Sorry, an error occurred communicating with the AI."));
-        }
-        
+        var response = await InterviewService.ChatAsync(
+            new InterviewBankChatRequest(question, history));
+
+        if (response != null)
+            chatMessages.Add(new ChatMsg(
+                "assistant",
+                response.TextAnswer,
+                response.FilteredQuestions));
+
         isChatLoading = false;
     }
 
-    string BuildAnalysisSummary()
+    async Task QuickAsk(string q)
     {
-        if (result == null) return "";
-        return $"ATS Score: {result.AtsScore}/100. " +
-               $"Matching skills: {string.Join(", ", result.MatchingSkills ?? new())}. " +
-               $"Missing skills: {string.Join(", ", result.MissingSkills ?? new())}. " +
-               $"Critical gaps: {string.Join(", ", result.CriticalMissingSkills ?? new())}.";
+        chatInput = q;
+        await SendChat();
     }
 
     async Task HandleKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter" && !e.ShiftKey)
-            await SendMessage();
+            await SendChat();
     }
-
-    async Task QuickAsk(string question)
-    {
-        currentMessage = question;
-        await SendMessage();
-    }
-
-    public record AnalyzeResult(
-        int AtsScore,
-        List<string> MatchingSkills,
-        List<string> MissingSkills,
-        List<string> CriticalMissingSkills,
-        List<string> Suggestions
-    );
-
-    public record ChatMessage(string Role, string Content);
-    public record ChatResponse(string Reply);
 }
 
 ================
@@ -5758,6 +6830,7 @@ builder.Services.AddScoped(sp => new HttpClient
 builder.Services.AddScoped<ApplicationService>();
 
 builder.Services.AddScoped<ResumeService>();
+builder.Services.AddScoped<InterviewService>();
 
 await builder.Build().RunAsync();
 
@@ -5865,6 +6938,85 @@ public class ApplicationService(HttpClient http)
 }
 
 ================
+File: JobAssistant.Web/Services/InterviewService.cs
+================
+using System.Net.Http.Json;
+using JobAssistant.Web.Models;
+
+namespace JobAssistant.Web.Services;
+
+public class InterviewService(HttpClient http)
+{
+    public async Task<List<InterviewQuestion>> GetByApplicationAsync(Guid applicationId)
+    {
+        try
+        {
+            return await http.GetFromJsonAsync<List<InterviewQuestion>>(
+                $"/api/interviews/application/{applicationId}") ?? new();
+        }
+        catch { return new(); }
+    }
+
+    public async Task<List<InterviewQuestion>> GetAllAsync()
+    {
+        try
+        {
+            return await http.GetFromJsonAsync<List<InterviewQuestion>>(
+                "/api/interviews") ?? new();
+        }
+        catch { return new(); }
+    }
+
+    public async Task<List<InterviewQuestion>> GenerateAsync(
+        GenerateQuestionsRequest req)
+    {
+        try
+        {
+            var response = await http.PostAsJsonAsync("/api/interviews/generate", req);
+            if (!response.IsSuccessStatusCode) return new();
+            return await response.Content
+                .ReadFromJsonAsync<List<InterviewQuestion>>() ?? new();
+        }
+        catch { return new(); }
+    }
+
+    public async Task<bool> UpdateAsync(Guid id, UpdateQuestionRequest req)
+    {
+        try
+        {
+            var response = await http.PatchAsJsonAsync(
+                $"/api/interviews/{id}", req);
+            return response.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
+    public async Task<bool> DeleteByApplicationAsync(Guid applicationId)
+    {
+        try
+        {
+            var response = await http.DeleteAsync(
+                $"/api/interviews/application/{applicationId}");
+            return response.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
+    public async Task<InterviewBankChatResponse?> ChatAsync(
+        InterviewBankChatRequest req)
+    {
+        try
+        {
+            var response = await http.PostAsJsonAsync("/api/interviews/chat", req);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content
+                .ReadFromJsonAsync<InterviewBankChatResponse>();
+        }
+        catch { return null; }
+    }
+}
+
+================
 File: JobAssistant.Web/Services/ResumeService.cs
 ================
 using System.Net.Http.Json;
@@ -5945,82 +7097,160 @@ File: JobAssistant.Web/wwwroot/css/app.css
 ================
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { font-family: 'Inter', sans-serif; font-size: 14px; background: #0d0d0f; color: #e8e8ea; height: 100%; }
-.container { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
-.logo { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 500; color: #e8e8ea; margin-bottom: 32px; }
-.logo-dot { width: 8px; height: 8px; border-radius: 50%; background: #6366f1; }
+
+/* --- App Shell Layout --- */
+.app-shell {
+    display: flex;
+    min-height: 100vh;
+    background: #0d0d0f;
+}
+
+.sidebar {
+    width: 220px;
+    min-height: 100vh;
+    background: #111114;
+    border-right: 0.5px solid #2a2a2e;
+    padding: 20px 12px;
+    flex-shrink: 0;
+    position: fixed;
+    top: 0;
+    left: 0;
+}
+
+.main-content {
+    margin-left: 220px;
+    flex: 1;
+    padding: 28px 32px;
+    min-height: 100vh;
+    max-width: 100%;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #e8e8ea;
+    margin-bottom: 28px;
+    padding: 4px 8px;
+}
+
+.logo-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #6366f1;
+    flex-shrink: 0;
+}
+
+.nav-section {
+    margin-bottom: 20px;
+}
+
+.nav-label {
+    font-size: 10px;
+    color: #555560;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 0 8px;
+    margin-bottom: 4px;
+}
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #888890;
+    text-decoration: none;
+    margin-bottom: 1px;
+    transition: background 0.1s, color 0.1s;
+}
+
+.nav-item:hover {
+    background: #1a1a1e;
+    color: #e8e8ea;
+}
+
+.nav-item.active {
+    background: #1e1e28;
+    color: #a5b4fc;
+}
+
+.nav-icon {
+    font-size: 14px;
+    width: 16px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+/* --- Core Components --- */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
 .panel { background: #111114; border: 0.5px solid #2a2a2e; border-radius: 10px; padding: 16px; }
 .panel-title { font-size: 11px; color: #555560; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+
 textarea { width: 100%; min-height: 180px; background: #0d0d0f; border: 0.5px solid #2a2a2e; border-radius: 6px; padding: 10px 12px; font-size: 13px; color: #e8e8ea; font-family: 'Inter', sans-serif; resize: vertical; outline: none; }
 textarea:focus { border-color: #6366f1; }
 textarea::placeholder { color: #3a3a42; }
+
 .btn-analyze { width: 100%; padding: 12px; background: #6366f1; color: #fff; border: none; border-radius: 7px; font-size: 14px; font-weight: 500; cursor: pointer; font-family: 'Inter', sans-serif; margin-top: 16px; transition: background 0.1s; }
 .btn-analyze:hover { background: #4f46e5; }
 .btn-analyze:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .result-panel { background: #111114; border: 0.5px solid #2a2a2e; border-radius: 10px; padding: 20px; margin-top: 16px; }
 .score { font-size: 48px; font-weight: 500; color: #a5b4fc; line-height: 1; }
 .score-label { font-size: 12px; color: #555560; margin-top: 4px; }
 .result-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 20px 0; }
 .result-card { background: #0d0d0f; border: 0.5px solid #2a2a2e; border-radius: 8px; padding: 12px; }
 .result-card-title { font-size: 11px; color: #555560; margin-bottom: 8px; }
+
 .chip { display: inline-block; padding: 3px 8px; border-radius: 20px; font-size: 11px; margin: 2px; }
 .chip-have { background: #0f2a1a; color: #4ade80; }
 .chip-missing { background: #2a1515; color: #f87171; }
 .chip-critical { background: #2a1515; color: #f87171; border: 0.5px solid #4a1515; font-weight: 500; }
+.chip-improve { background: #1a1a2a; color: #a5b4fc; }
+
 .suggestions { margin-top: 16px; border-top: 0.5px solid #2a2a2e; padding-top: 16px; }
 .suggestion-title { font-size: 11px; color: #555560; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
 .suggestion-item { font-size: 13px; color: #888890; padding: 8px 0; border-bottom: 0.5px solid #1e1e22; display: flex; gap: 8px; }
 .suggestion-item:last-child { border-bottom: none; }
 .suggestion-dot { color: #6366f1; font-size: 16px; line-height: 1.4; }
+
 .loading { text-align: center; padding: 40px; color: #555560; font-size: 13px; }
 .error { background: #2a1515; border: 0.5px solid #4a1515; border-radius: 8px; padding: 12px 16px; color: #f87171; font-size: 13px; margin-top: 16px; }
+
 /* --- Career Chat Styles --- */
-.chat-panel {
-    background: #111114;
-    border: 0.5px solid #2a2a2e;
-    border-radius: 10px;
-    padding: 20px;
-    margin-top: 16px;
-}
+.chat-panel { background: #111114; border: 0.5px solid #2a2a2e; border-radius: 10px; padding: 20px; margin-top: 16px; }
 
 .chat-messages {
-    min-height: 120px;
-    max-height: 400px;
+    min-height: 80px;
+    max-height: 320px;
     overflow-y: auto;
-    margin-bottom: 16px;
+    padding: 12px 14px;
     display: flex;
     flex-direction: column;
     gap: 10px;
 }
 
-.chat-empty {
-    color: #3a3a42;
-    font-size: 13px;
-    text-align: center;
-    padding: 20px 0 12px;
-}
+.chat-empty { color: #3a3a42; font-size: 13px; text-align: center; padding: 20px 0 12px; }
 
-.chat-suggestions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    justify-content: center;
-    margin-bottom: 8px;
-}
-
-.chat-suggestion-btn {
-    background: #1a1a2a;
-    border: 0.5px solid #2a2a4a;
+.chat-suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; }
+.chat-suggestion-btn,
+.chat-suggestion-chip {
+    padding: 4px 10px;
     border-radius: 20px;
+    font-size: 11px;
+    border: 0.5px solid #2a2a4a;
     color: #a5b4fc;
-    font-size: 12px;
-    padding: 6px 12px;
+    background: #1a1a2a;
     cursor: pointer;
-    font-family: 'Inter', sans-serif;
-    transition: background 0.1s;
+    font-family: inherit;
 }
-
-.chat-suggestion-btn:hover { background: #252535; }
+.chat-suggestion-btn:hover,
+.chat-suggestion-chip:hover { background: #252535; }
 
 .chat-msg {
     padding: 10px 14px;
@@ -6031,32 +7261,34 @@ textarea::placeholder { color: #3a3a42; }
 }
 
 .chat-msg-user {
+    align-self: flex-end;
     background: #1e1e28;
     color: #e8e8ea;
-    align-self: flex-end;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    max-width: 70%;
     border: 0.5px solid #2a2a3e;
 }
 
-.chat-msg-assistant {
+.chat-msg-assistant,
+.chat-msg-ai { align-self: flex-start; max-width: 88%; }
+
+.chat-msg-ai-text {
     background: #0d0d0f;
     color: #c8c8cc;
-    align-self: flex-start;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 12px;
     border: 0.5px solid #2a2a2e;
+    line-height: 1.6;
+    margin-bottom: 6px;
 }
 
-.chat-loading {
-    color: #555560;
-}
-
-.chat-loading .dot {
-    animation: blink 1.4s infinite;
-    font-size: 20px;
-    line-height: 0.5;
-}
-
+.chat-loading { color: #555560; }
+.chat-loading .dot { animation: blink 1.4s infinite; font-size: 20px; line-height: 0.5; }
 .chat-loading .dot:nth-child(2) { animation-delay: 0.2s; }
 .chat-loading .dot:nth-child(3) { animation-delay: 0.4s; }
-
 @keyframes blink {
     0%, 80%, 100% { opacity: 0; }
     40% { opacity: 1; }
@@ -6064,21 +7296,22 @@ textarea::placeholder { color: #3a3a42; }
 
 .chat-input-row {
     display: flex;
-    gap: 8px;
+    gap: 7px;
+    padding: 10px 14px;
+    border-top: 0.5px solid #2a2a2e;
 }
 
 .chat-input {
     flex: 1;
     background: #0d0d0f;
     border: 0.5px solid #2a2a2e;
-    border-radius: 7px;
-    padding: 10px 14px;
-    font-size: 13px;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
     color: #e8e8ea;
-    font-family: 'Inter', sans-serif;
+    font-family: inherit;
     outline: none;
 }
-
 .chat-input:focus { border-color: #6366f1; }
 .chat-input::placeholder { color: #3a3a42; }
 
@@ -6086,20 +7319,70 @@ textarea::placeholder { color: #3a3a42; }
     background: #6366f1;
     color: #fff;
     border: none;
-    border-radius: 7px;
-    padding: 10px 20px;
-    font-size: 13px;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    font-family: 'Inter', sans-serif;
-    transition: background 0.1s;
+    font-family: inherit;
     white-space: nowrap;
 }
-
 .chat-send-btn:hover { background: #4f46e5; }
-.chat-send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.chat-send-btn:disabled { opacity: .4; cursor: not-allowed; }
 
+.chat-loading-dots { color: #555560; font-size: 18px; padding: 4px 12px; }
 
+.chat-mini-table {
+    background: #0d0d0f;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 11px;
+    width: 100%;
+    border-collapse: collapse;
+}
+.chat-mini-table th {
+    font-size: 10px;
+    color: #555560;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    padding: 5px 10px;
+    text-align: left;
+    border-bottom: 0.5px solid #2a2a2e;
+    font-weight: 400;
+}
+.chat-mini-table td {
+    color: #c8c8cc;
+    padding: 5px 10px;
+    border-bottom: 0.5px solid #1a1a1e;
+}
+.chat-mini-table tr:last-child td { border-bottom: none; }
+
+.chat-section {
+    background: #111114;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 4px;
+}
+.chat-header {
+    padding: 10px 14px;
+    border-bottom: 0.5px solid #2a2a2e;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.chat-badge {
+    font-size: 10px;
+    background: #1e1e28;
+    color: #6366f1;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: auto;
+}
+
+/* --- Status Badges --- */
 .badge-saved     { background: #1e1e22; color: #888890; }
 .badge-applied   { background: #1a1a2a; color: #a5b4fc; }
 .badge-hr        { background: #1a2a1a; color: #86efac; }
@@ -6108,6 +7391,7 @@ textarea::placeholder { color: #3a3a42; }
 .badge-offer     { background: #0a2a0a; color: #4ade80; }
 .badge-rejected  { background: #2a1515; color: #f87171; }
 
+/* --- Stats & Data Table --- */
 .stat-card {
     background: #111114;
     border: 0.5px solid #2a2a2e;
@@ -6145,121 +7429,7 @@ textarea::placeholder { color: #3a3a42; }
 .data-table tr:last-child td { border-bottom: none; }
 .data-table tr:hover td { background: #111118; }
 
-.chat-section {
-    background: #111114;
-    border: 0.5px solid #2a2a2e;
-    border-radius: 8px;
-    overflow: hidden;
-    margin-top: 4px;
-}
-.chat-header {
-    padding: 10px 14px;
-    border-bottom: 0.5px solid #2a2a2e;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-.chat-messages {
-    min-height: 80px;
-    max-height: 320px;
-    overflow-y: auto;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-.chat-msg-user {
-    align-self: flex-end;
-    background: #1e1e28;
-    color: #e8e8ea;
-    padding: 8px 12px;
-    border-radius: 8px;
-    font-size: 12px;
-    max-width: 70%;
-    border: 0.5px solid #2a2a3e;
-}
-.chat-msg-ai { align-self: flex-start; max-width: 88%; }
-.chat-msg-ai-text {
-    background: #0d0d0f;
-    color: #c8c8cc;
-    padding: 8px 12px;
-    border-radius: 8px;
-    font-size: 12px;
-    border: 0.5px solid #2a2a2e;
-    line-height: 1.6;
-    margin-bottom: 6px;
-}
-.chat-mini-table {
-    background: #0d0d0f;
-    border: 0.5px solid #2a2a2e;
-    border-radius: 6px;
-    overflow: hidden;
-    font-size: 11px;
-    width: 100%;
-    border-collapse: collapse;
-}
-.chat-mini-table th {
-    font-size: 10px;
-    color: #555560;
-    text-transform: uppercase;
-    letter-spacing: .04em;
-    padding: 5px 10px;
-    text-align: left;
-    border-bottom: 0.5px solid #2a2a2e;
-    font-weight: 400;
-}
-.chat-mini-table td {
-    color: #c8c8cc;
-    padding: 5px 10px;
-    border-bottom: 0.5px solid #1a1a1e;
-}
-.chat-mini-table tr:last-child td { border-bottom: none; }
-.chat-suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; }
-.chat-suggestion-chip {
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    border: 0.5px solid #2a2a4a;
-    color: #a5b4fc;
-    background: #1a1a2a;
-    cursor: pointer;
-    font-family: inherit;
-}
-.chat-suggestion-chip:hover { background: #252535; }
-.chat-input-row {
-    display: flex;
-    gap: 7px;
-    padding: 10px 14px;
-    border-top: 0.5px solid #2a2a2e;
-}
-.chat-input {
-    flex: 1;
-    background: #0d0d0f;
-    border: 0.5px solid #2a2a2e;
-    border-radius: 6px;
-    padding: 8px 12px;
-    font-size: 12px;
-    color: #e8e8ea;
-    font-family: inherit;
-    outline: none;
-}
-.chat-input:focus { border-color: #6366f1; }
-.chat-input::placeholder { color: #3a3a42; }
-.chat-send-btn {
-    background: #6366f1;
-    color: #fff;
-    border: none;
-    border-radius: 6px;
-    padding: 8px 16px;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    font-family: inherit;
-}
-.chat-send-btn:hover { background: #4f46e5; }
-.chat-send-btn:disabled { opacity: .4; cursor: not-allowed; }
-.chat-loading-dots { color: #555560; font-size: 18px; padding: 4px 12px; }
-
+/* --- Modal --- */
 .modal-overlay {
     position: fixed;
     inset: 0;
@@ -6278,6 +7448,7 @@ textarea::placeholder { color: #3a3a42; }
     max-width: 90vw;
 }
 .modal-title { font-size: 14px; font-weight: 500; color: #e8e8ea; margin-bottom: 16px; }
+
 .form-group { margin-bottom: 12px; }
 .form-label { font-size: 11px; color: #555560; margin-bottom: 5px; display: block; }
 .form-input, .form-select, .form-textarea {
@@ -6294,6 +7465,7 @@ textarea::placeholder { color: #3a3a42; }
 .form-textarea { min-height: 72px; resize: vertical; }
 .form-input:focus, .form-select:focus, .form-textarea:focus { border-color: #6366f1; }
 .form-select option { background: #111114; }
+
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 .btn-cancel {
     background: transparent;
@@ -6306,39 +7478,22 @@ textarea::placeholder { color: #3a3a42; }
     font-family: inherit;
 }
 
-/* --- Navigation Header Styles --- */
-.header-nav {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 32px;
-    border-bottom: 0.5px solid #2a2a2e;
-    padding-bottom: 16px;
-}
-.header-nav .logo {
-    margin-bottom: 0;
-}
-.top-nav {
-    display: flex;
-    gap: 20px;
-}
-.nav-btn {
-    color: #888890;
-    text-decoration: none;
+.btn-primary {
+    background: #6366f1;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
     font-size: 13px;
     font-weight: 500;
-    padding-bottom: 4px;
-    transition: color 0.1s;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.1s;
 }
-.nav-btn:hover {
-    color: #e8e8ea;
-}
-.nav-btn.active {
-    color: #e8e8ea;
-    border-bottom: 2px solid #6366f1;
-}
+.btn-primary:hover { background: #4f46e5; }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* --- Priority & Edit Modal Styles --- */
+/* --- Priority & Edit Modal --- */
 .priority-btn {
     background: transparent;
     border: 0.5px solid #2a2a2e;
@@ -6387,28 +7542,12 @@ textarea::placeholder { color: #3a3a42; }
     line-height: 1.6;
 }
 
-.btn-primary {
-    background: #6366f1;
-    color: #fff;
-    border: none;
-    border-radius: 6px;
-    padding: 7px 14px;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    font-family: inherit;
-    transition: background 0.1s;
-}
-.btn-primary:hover { background: #4f46e5; }
-.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
-
 .co { font-weight: 500; }
 .pos { font-size: 11px; color: #888890; }
 .src { color: #888890; font-size: 12px; }
 .dt { color: #888890; font-size: 12px; }
 
-
-/* --- Resume Manager Styles --- */
+/* --- Resume Manager --- */
 .page-header {
     display: flex;
     align-items: center;
@@ -6420,21 +7559,6 @@ textarea::placeholder { color: #3a3a42; }
     font-weight: 500;
     color: #e8e8ea;
 }
-
-.btn-primary {
-    background: #6366f1;
-    color: #fff;
-    border: none;
-    border-radius: 6px;
-    padding: 8px 16px;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    font-family: inherit;
-    transition: background 0.1s;
-}
-.btn-primary:hover { background: #4f46e5; }
-.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .resume-grid {
     display: grid;
@@ -6467,20 +7591,8 @@ textarea::placeholder { color: #3a3a42; }
 }
 
 .resume-icon { font-size: 28px; margin-bottom: 10px; }
-
-.resume-name {
-    font-size: 13px;
-    font-weight: 500;
-    color: #e8e8ea;
-    margin-bottom: 4px;
-}
-
-.resume-meta {
-    font-size: 11px;
-    color: #555560;
-    margin-bottom: 14px;
-}
-
+.resume-name { font-size: 13px; font-weight: 500; color: #e8e8ea; margin-bottom: 4px; }
+.resume-meta { font-size: 11px; color: #555560; margin-bottom: 14px; }
 .resume-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
 .ca-btn {
@@ -6495,11 +7607,7 @@ textarea::placeholder { color: #3a3a42; }
     transition: all .1s;
 }
 .ca-btn:hover { border-color: #6366f1; color: #a5b4fc; }
-.ca-btn.ca-primary {
-    background: #1e1e28;
-    color: #a5b4fc;
-    border-color: #3730a3;
-}
+.ca-btn.ca-primary { background: #1e1e28; color: #a5b4fc; border-color: #3730a3; }
 .ca-btn.ca-danger:hover { border-color: #f87171; color: #f87171; }
 
 .recommend-panel {
@@ -6509,7 +7617,6 @@ textarea::placeholder { color: #3a3a42; }
     padding: 18px;
     margin-bottom: 20px;
 }
-
 .recommend-title {
     font-size: 13px;
     font-weight: 500;
@@ -6519,19 +7626,8 @@ textarea::placeholder { color: #3a3a42; }
     align-items: center;
     gap: 8px;
 }
-
-.recommend-subtitle {
-    font-size: 11px;
-    color: #555560;
-    font-weight: 400;
-}
-
-.recommend-input-row {
-    display: flex;
-    gap: 10px;
-    align-items: flex-start;
-    margin-bottom: 14px;
-}
+.recommend-subtitle { font-size: 11px; color: #555560; font-weight: 400; }
+.recommend-input-row { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 14px; }
 
 .recommend-textarea {
     flex: 1;
@@ -6554,18 +7650,10 @@ textarea::placeholder { color: #3a3a42; }
     border-radius: 8px;
     padding: 16px;
 }
-
-.rec-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 10px;
-}
-
+.rec-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .rec-label { font-size: 10px; color: #555560; margin-bottom: 3px; }
 .rec-winner { font-size: 15px; font-weight: 500; color: #e8e8ea; }
 .rec-score { font-size: 32px; font-weight: 500; color: #4ade80; }
-
 .rec-reasoning {
     font-size: 12px;
     color: #888890;
@@ -6574,41 +7662,223 @@ textarea::placeholder { color: #3a3a42; }
     padding-bottom: 14px;
     border-bottom: 0.5px solid #2a2a2e;
 }
-
 .rec-scores { display: flex; flex-direction: column; gap: 8px; }
-
-.rec-score-item {
-    display: grid;
-    grid-template-columns: 160px 1fr 40px;
-    align-items: center;
-    gap: 10px;
-}
-
+.rec-score-item { display: grid; grid-template-columns: 160px 1fr 40px; align-items: center; gap: 10px; }
 .rec-score-name { font-size: 12px; color: #888890; }
 .rec-score-name-best { color: #e8e8ea; }
-
-.rec-score-bar-wrap {
-    height: 4px;
-    background: #1e1e22;
-    border-radius: 2px;
-    overflow: hidden;
-}
-
-.rec-score-bar {
-    height: 100%;
-    border-radius: 2px;
-    transition: width .3s;
-}
-
+.rec-score-bar-wrap { height: 4px; background: #1e1e22; border-radius: 2px; overflow: hidden; }
+.rec-score-bar { height: 100%; border-radius: 2px; transition: width .3s; }
 .rec-score-val { font-size: 12px; color: #555560; text-align: right; }
 .rec-score-val-best { color: #4ade80; }
+.resume-content-textarea { min-height: 200px; resize: vertical; line-height: 1.6; font-size: 12px; }
 
-.resume-content-textarea {
-    min-height: 200px;
-    resize: vertical;
-    line-height: 1.6;
-    font-size: 12px;
+/* --- Smart Analyze --- */
+.analyze-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
 }
+.analyze-textarea {
+    width: 100%;
+    background: #0d0d0f;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 13px;
+    color: #e8e8ea;
+    font-family: inherit;
+    resize: vertical;
+    outline: none;
+    min-height: 160px;
+}
+.analyze-textarea:focus { border-color: #6366f1; }
+.analyze-textarea::placeholder { color: #3a3a42; }
+
+.resume-select-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+.resume-option {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    border-radius: 7px;
+    border: 0.5px solid #2a2a2e;
+    background: #0d0d0f;
+    cursor: pointer;
+    transition: border-color .1s;
+}
+.resume-option:hover { border-color: #3730a3; }
+.resume-option-selected { border-color: #6366f1; background: #1a1a2a; }
+
+.resume-option-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1.5px solid #3a3a42;
+    flex-shrink: 0;
+}
+.resume-option-dot-active { border-color: #6366f1; background: #6366f1; }
+.resume-option-name { font-size: 12px; color: #e8e8ea; margin-bottom: 2px; }
+.resume-option-meta { font-size: 11px; color: #555560; }
+
+.no-resumes { padding: 20px 0; text-align: center; }
+
+.result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 0.5px solid #2a2a2e;
+}
+
+
+
+
+/* Modal tabs */
+.modal-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 0.5px solid #2a2a2e;
+    margin-bottom: 16px;
+}
+.modal-tab {
+    padding: 8px 16px;
+    font-size: 12px;
+    color: #555560;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: color .1s;
+}
+.modal-tab:hover { color: #e8e8ea; }
+.modal-tab-active {
+    color: #a5b4fc;
+    border-bottom-color: #6366f1;
+}
+.tab-count {
+    background: #1e1e28;
+    color: #a5b4fc;
+    border-radius: 20px;
+    padding: 1px 6px;
+    font-size: 10px;
+}
+
+/* Question cards */
+.question-card {
+    background: #111114;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 8px;
+    padding: 14px;
+    transition: border-color .1s;
+}
+.question-card:hover { border-color: #2a2a3e; }
+
+.question-card-mini {
+    background: #0d0d0f;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 7px;
+    padding: 10px 12px;
+}
+
+.question-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.question-type-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-weight: 500;
+}
+.qtype-technical  { background: #1a1a2a; color: #a5b4fc; }
+.qtype-behavioral { background: #1a2a1a; color: #86efac; }
+.qtype-askthem    { background: #2a1f0a; color: #fbbf24; }
+
+.question-text {
+    font-size: 13px;
+    color: #e8e8ea;
+    line-height: 1.6;
+    margin-bottom: 8px;
+}
+
+.question-hint {
+    font-size: 11px;
+    color: #555560;
+    line-height: 1.5;
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    background: #0d0d0f;
+    border-radius: 5px;
+    border-left: 2px solid #6366f1;
+}
+
+.question-note-input {
+    width: 100%;
+    background: #0d0d0f;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 5px;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: #888890;
+    font-family: inherit;
+    resize: none;
+    min-height: 48px;
+    outline: none;
+}
+.question-note-input:focus { border-color: #6366f1; }
+.question-note-input::placeholder { color: #3a3a42; }
+
+.status-select {
+    background: transparent;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 5px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    outline: none;
+}
+.status-notpracticed { color: #555560; }
+.status-needswork    { color: #fbbf24; border-color: #3a2a0a; }
+.status-practiced    { color: #4ade80; border-color: #1a3a1a; }
+
+.filter-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.fc {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    border: 0.5px solid #2a2a2e;
+    color: #888890;
+    background: transparent;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all .1s;
+}
+.fc:hover { border-color: #6366f1; color: #a5b4fc; }
+.fc-active {
+    background: #1e1e28;
+    color: #a5b4fc;
+    border-color: #3730a3;
+}
+
+.chat-mini-result {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 4px 0;
+    border-bottom: 0.5px solid #1a1a1e;
+}
+.chat-mini-result:last-child { border-bottom: none; }
+
+.interview-tab-content { min-height: 200px; }
 
 ================
 File: JobAssistant.Web/wwwroot/index.html
