@@ -23,6 +23,9 @@ builder.Services.AddScoped<ApplicationRepository>();
 builder.Services.AddScoped<DataChatService>();
 builder.Services.AddScoped<ResumeRepository>();
 builder.Services.AddScoped<ResumeRecommendationService>();
+builder.Services.AddScoped<InterviewRepository>();
+builder.Services.AddScoped<InterviewGeneratorService>();
+builder.Services.AddScoped<InterviewBankChatService>();
 
 var app = builder.Build();
 app.UseCors();
@@ -154,7 +157,55 @@ resumes.MapDelete("/{id:guid}", async (Guid id, ResumeRepository repo) =>
     return ok ? Results.NoContent() : Results.NotFound();
 });
 
+
+
+var interviews = app.MapGroup("/api/interviews");
+
+// همه سوالات یه اپلیکیشن خاص
+interviews.MapGet("/application/{applicationId:guid}",
+    async (Guid applicationId, InterviewRepository repo) =>
+        Results.Ok(await repo.GetByApplicationAsync(applicationId)));
+
+// همه سوالات (برای Interview Bank)
+interviews.MapGet("/",
+    async (InterviewRepository repo) =>
+        Results.Ok(await repo.GetAllAsync()));
+
+// Generate سوالات جدید
+interviews.MapPost("/generate",
+    async (GenerateQuestionsRequest req, InterviewGeneratorService svc) =>
+    {
+        if (req.ApplicationId == Guid.Empty)
+            return Results.BadRequest("ApplicationId is required.");
+        var questions = await svc.GenerateAsync(req);
+        return Results.Ok(questions);
+    });
+
+// آپدیت نوت و وضعیت یه سوال
+interviews.MapPatch("/{id:guid}",
+    async (Guid id, UpdateQuestionRequest req, InterviewRepository repo) =>
+    {
+        var ok = await repo.UpdateAsync(id, req);
+        return ok ? Results.NoContent() : Results.NotFound();
+    });
+
+// حذف همه سوالات یه اپلیکیشن (برای regenerate)
+interviews.MapDelete("/application/{applicationId:guid}",
+    async (Guid applicationId, InterviewRepository repo) =>
+    {
+        await repo.DeleteByApplicationAsync(applicationId);
+        return Results.NoContent();
+    });
+
+// Interview Bank Chat
+interviews.MapPost("/chat",
+    async (InterviewBankChatRequest req, InterviewBankChatService svc) =>
+        Results.Ok(await svc.ChatAsync(req)));
+
+
+
 await ResumeRepository.InitDbAsync(dataSource);
+await InterviewRepository.InitDbAsync(dataSource);
 await ApplicationRepository.InitDbAsync(dataSource);
 
 app.Run();

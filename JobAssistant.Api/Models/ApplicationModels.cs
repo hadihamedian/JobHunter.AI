@@ -19,6 +19,7 @@ public record ApplicationDetail(
     string CompanyName,
     string Position,
     string? JobUrl,
+    string? JobDescription,
     string Source,
     string? ResumeVersion,
     string Status,

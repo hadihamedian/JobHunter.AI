@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS ""Applications"" (
     ""UpdatedAt""    TIMESTAMPTZ
 );
 ALTER TABLE ""Applications"" ADD COLUMN IF NOT EXISTS ""Priority"" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ""Applications"" ADD COLUMN IF NOT EXISTS ""JobDescription"" TEXT;
 ";
         await using var cmd = dataSource.CreateCommand(sql);
         await cmd.ExecuteNonQueryAsync();
@@ -57,7 +58,7 @@ FROM ""Applications""";
 
     public async Task<ApplicationDetail?> GetByIdAsync(Guid id)
     {
-        var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""JobUrl"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""Notes"", ""AppliedAt"", ""CreatedAt"", ""UpdatedAt"", ""Priority""
+        var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""JobUrl"", ""JobDescription"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""Notes"", ""AppliedAt"", ""CreatedAt"", ""UpdatedAt"", ""Priority""
 FROM ""Applications"" WHERE ""Id"" = $1";
         await using var cmd = db.CreateCommand(sql);
         cmd.Parameters.AddWithValue(id);
@@ -67,15 +68,16 @@ FROM ""Applications"" WHERE ""Id"" = $1";
             return new ApplicationDetail(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
                 reader.IsDBNull(3) ? null : reader.GetString(3),
-                reader.GetString(4),
-                reader.IsDBNull(5) ? null : reader.GetString(5),
-                reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                reader.IsDBNull(8) ? null : reader.GetString(8),
-                reader.IsDBNull(9) ? null : reader.GetDateTime(9),
-                reader.GetDateTime(10),
-                reader.IsDBNull(11) ? null : reader.GetDateTime(11),
-                reader.GetInt32(12)
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetDateTime(10),
+                reader.GetDateTime(11),
+                reader.IsDBNull(12) ? null : reader.GetDateTime(12),
+                reader.GetInt32(13)
             );
         }
         return null;
@@ -165,7 +167,7 @@ SELECT
     public async Task<List<ApplicationDetail>> GetAllForChatAsync()
     {
         var list = new List<ApplicationDetail>();
-        var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""JobUrl"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""Notes"", ""AppliedAt"", ""CreatedAt"", ""UpdatedAt"", ""Priority""
+        var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""JobUrl"", ""JobDescription"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""Notes"", ""AppliedAt"", ""CreatedAt"", ""UpdatedAt"", ""Priority""
 FROM ""Applications"" ORDER BY ""CreatedAt"" DESC LIMIT 20";
         await using var cmd = db.CreateCommand(sql);
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -174,15 +176,16 @@ FROM ""Applications"" ORDER BY ""CreatedAt"" DESC LIMIT 20";
             list.Add(new ApplicationDetail(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
                 reader.IsDBNull(3) ? null : reader.GetString(3),
-                reader.GetString(4),
-                reader.IsDBNull(5) ? null : reader.GetString(5),
-                reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                reader.IsDBNull(8) ? null : reader.GetString(8),
-                reader.IsDBNull(9) ? null : reader.GetDateTime(9),
-                reader.GetDateTime(10),
-                reader.IsDBNull(11) ? null : reader.GetDateTime(11),
-                reader.GetInt32(12)
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetDateTime(10),
+                reader.GetDateTime(11),
+                reader.IsDBNull(12) ? null : reader.GetDateTime(12),
+                reader.GetInt32(13)
             ));
         }
         return list;
