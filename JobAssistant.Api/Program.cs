@@ -67,8 +67,8 @@ app.MapPost("/api/chat", async (ChatRequest request, CareerChatService chatServi
 
 var apps = app.MapGroup("/api/applications");
 
-apps.MapGet("/", async (ApplicationRepository repo, string? status = null) =>
-    Results.Ok(await repo.GetAllAsync(status)));
+apps.MapGet("/", async (ApplicationRepository repo, string? status = null, string? q = null) =>
+    Results.Ok(await repo.GetAllAsync(status, q)));
 
 apps.MapGet("/stats", async (ApplicationRepository repo) =>
     Results.Ok(await repo.GetStatsAsync()));

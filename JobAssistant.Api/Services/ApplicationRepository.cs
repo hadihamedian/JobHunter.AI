@@ -29,15 +29,34 @@ ALTER TABLE ""Applications"" ADD COLUMN IF NOT EXISTS ""JobDescription"" TEXT;
         await cmd.ExecuteNonQueryAsync();
     }
 
-    public async Task<List<ApplicationSummary>> GetAllAsync(string? status = null)
+    public async Task<List<ApplicationSummary>> GetAllAsync(string? status = null, string? search = null)
     {
         var list = new List<ApplicationSummary>();
         var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""JobUrl"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""AppliedAt"", ""CreatedAt"", ""Priority""
-FROM ""Applications""";
-        if (!string.IsNullOrEmpty(status)) sql += @" WHERE ""Status"" = $1";
+FROM ""Applications"" WHERE 1=1";
+
+        var paramIndex = 1;
+
+        if (!string.IsNullOrEmpty(status))
+        {
+            sql += $@" AND ""Status"" = ${paramIndex}";
+            paramIndex++;
+        }
+
+        if (!string.IsNullOrEmpty(search))
+        {
+            sql += $@" AND (""CompanyName"" ILIKE ${paramIndex} OR ""Position"" ILIKE ${paramIndex} OR ""Notes"" ILIKE ${paramIndex} OR ""JobDescription"" ILIKE ${paramIndex})";
+            paramIndex++;
+        }
+
         sql += @" ORDER BY ""Priority"" ASC, ""CreatedAt"" DESC";
+
         await using var cmd = db.CreateCommand(sql);
-        if (!string.IsNullOrEmpty(status)) cmd.Parameters.AddWithValue(status);
+        if (!string.IsNullOrEmpty(status))
+            cmd.Parameters.AddWithValue(status);
+        if (!string.IsNullOrEmpty(search))
+            cmd.Parameters.AddWithValue($"%{search}%");
+
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {

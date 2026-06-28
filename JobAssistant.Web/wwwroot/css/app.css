@@ -782,3 +782,117 @@ textarea::placeholder { color: #3a3a42; }
 .chat-mini-result:last-child { border-bottom: none; }
 
 .interview-tab-content { min-height: 200px; }
+
+
+
+
+
+
+/* --- Search Bar Styles --- */
+.search-bar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    background: #111114;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 8px;
+    padding: 0 12px;
+    margin-bottom: 16px;
+    transition: border-color 0.15s;
+}
+.search-bar:focus-within {
+    border-color: #6366f1;
+}
+.search-icon {
+    color: #555560;
+    flex-shrink: 0;
+}
+.search-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #e8e8ea;
+    font-size: 13px;
+    font-family: inherit;
+    padding: 10px 8px;
+}
+.search-input::placeholder {
+    color: #3a3a42;
+}
+.search-clear {
+    background: transparent;
+    border: none;
+    color: #555560;
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 12px;
+    border-radius: 4px;
+    transition: all 0.1s;
+}
+.search-clear:hover {
+    background: #1a1a1e;
+    color: #888890;
+}
+
+/* --- Pagination Styles --- */
+.pagination-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 20px 0;
+    border-top: 0.5px solid #2a2a2e;
+    margin-top: 20px;
+}
+.pagination-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #111114;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 6px;
+    padding: 8px 14px;
+    color: #888890;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.1s;
+}
+.pagination-btn:hover:not(:disabled) {
+    border-color: #6366f1;
+    color: #a5b4fc;
+    background: #1a1a1e;
+}
+.pagination-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+.pagination-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #888890;
+}
+.page-select {
+    background: #111114;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #e8e8ea;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    outline: none;
+    min-width: 50px;
+    text-align: center;
+}
+.page-select:focus {
+    border-color: #6366f1;
+}
+.page-select option {
+    background: #111114;
+    color: #e8e8ea;
+}

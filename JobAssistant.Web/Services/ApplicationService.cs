@@ -6,9 +6,14 @@ namespace JobAssistant.Web.Services;
 
 public class ApplicationService(HttpClient http)
 {
-    public async Task<List<ApplicationSummary>> GetAllAsync(string? status = null)
+    public async Task<List<ApplicationSummary>> GetAllAsync(string? status = null, string? search = null)
     {
-        var url = string.IsNullOrEmpty(status) ? "/api/applications" : $"/api/applications?status={status}";
+        var url = "/api/applications?";
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(status)) parts.Add($"status={status}");
+        if (!string.IsNullOrEmpty(search)) parts.Add($"q={Uri.EscapeDataString(search)}");
+        url += string.Join("&", parts);
+        if (url.EndsWith("?")) url = url.TrimEnd('?');
         return await http.GetFromJsonAsync<List<ApplicationSummary>>(url) ?? new();
     }
 
