@@ -21,6 +21,8 @@ var dataSource = NpgsqlDataSource.Create(connectionString);
 builder.Services.AddSingleton(dataSource);
 builder.Services.AddScoped<ApplicationRepository>();
 builder.Services.AddScoped<DataChatService>();
+builder.Services.AddScoped<ResumeRepository>();
+builder.Services.AddScoped<ResumeRecommendationService>();
 
 var app = builder.Build();
 app.UseCors();
@@ -92,6 +94,50 @@ apps.MapPost("/{id:guid}/move-down", async (Guid id, ApplicationRepository repo)
     return ok ? Results.NoContent() : Results.BadRequest();
 });
 
+var resumes = app.MapGroup("/api/resumes");
+
+resumes.MapGet("/", async (ResumeRepository repo) =>
+    Results.Ok(await repo.GetAllAsync()));
+
+resumes.MapGet("/{id:guid}", async (Guid id, ResumeRepository repo) =>
+{
+    var resume = await repo.GetByIdAsync(id);
+    return resume is null ? Results.NotFound() : Results.Ok(resume);
+});
+
+resumes.MapPost("/", async (CreateResumeRequest req, ResumeRepository repo) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Name) || string.IsNullOrWhiteSpace(req.Content))
+        return Results.BadRequest("Name and Content are required.");
+    var id = await repo.CreateAsync(req);
+    return Results.Created($"/api/resumes/{id}", new { id });
+});
+
+resumes.MapPatch("/{id:guid}", async (Guid id, UpdateResumeRequest req, ResumeRepository repo) =>
+{
+    var ok = await repo.UpdateAsync(id, req);
+    return ok ? Results.NoContent() : Results.NotFound();
+});
+
+resumes.MapDelete("/{id:guid}", async (Guid id, ResumeRepository repo) =>
+{
+    var ok = await repo.DeleteAsync(id);
+    return ok ? Results.NoContent() : Results.NotFound();
+});
+
+resumes.MapPost("/recommend", async (
+    RecommendResumeRequest req,
+    ResumeRecommendationService svc) =>
+{
+    if (string.IsNullOrWhiteSpace(req.JobDescription))
+        return Results.BadRequest("Job description is required.");
+    var result = await svc.RecommendAsync(req.JobDescription);
+    return result is null
+        ? Results.NotFound("No resumes found.")
+        : Results.Ok(result);
+});
+
+await ResumeRepository.InitDbAsync(dataSource);
 await ApplicationRepository.InitDbAsync(dataSource);
 
 app.Run();
