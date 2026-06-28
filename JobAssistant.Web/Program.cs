@@ -15,5 +15,6 @@ builder.Services.AddScoped(sp => new HttpClient
 builder.Services.AddScoped<ApplicationService>();
 
 builder.Services.AddScoped<ResumeService>();
+builder.Services.AddScoped<InterviewService>();
 
 await builder.Build().RunAsync();

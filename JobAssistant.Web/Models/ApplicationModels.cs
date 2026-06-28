@@ -5,8 +5,8 @@ public record ApplicationSummary(Guid Id, string CompanyName, string Position,
     int? AtsScore, DateTimeOffset? AppliedAt, DateTimeOffset CreatedAt, int Priority);
 
 public record ApplicationDetail(Guid Id, string CompanyName, string Position,
-    string? JobUrl, string Source, string? ResumeVersion, string Status,
-    int? AtsScore, string? Notes, DateTimeOffset? AppliedAt,
+    string? JobUrl, string? JobDescription, string Source, string? ResumeVersion,
+    string Status, int? AtsScore, string? Notes, DateTimeOffset? AppliedAt,
     DateTimeOffset CreatedAt, DateTimeOffset? UpdatedAt, int Priority);
 
 public record CreateApplicationRequest(string CompanyName, string Position,
