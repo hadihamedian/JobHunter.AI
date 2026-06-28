@@ -461,3 +461,206 @@ textarea::placeholder { color: #3a3a42; }
 .pos { font-size: 11px; color: #888890; }
 .src { color: #888890; font-size: 12px; }
 .dt { color: #888890; font-size: 12px; }
+
+
+/* --- Resume Manager Styles --- */
+.page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+.page-title {
+    font-size: 18px;
+    font-weight: 500;
+    color: #e8e8ea;
+}
+
+.btn-primary {
+    background: #6366f1;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.1s;
+}
+.btn-primary:hover { background: #4f46e5; }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.resume-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.resume-card {
+    background: #111114;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 10px;
+    padding: 16px;
+    position: relative;
+    transition: border-color .15s;
+}
+.resume-card:hover { border-color: #3730a3; }
+.resume-card-default { border-color: #6366f1; }
+
+.default-badge {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: #1e1e28;
+    color: #a5b4fc;
+    border: 0.5px solid #3730a3;
+    border-radius: 20px;
+    font-size: 10px;
+    padding: 2px 8px;
+}
+
+.resume-icon { font-size: 28px; margin-bottom: 10px; }
+
+.resume-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: #e8e8ea;
+    margin-bottom: 4px;
+}
+
+.resume-meta {
+    font-size: 11px;
+    color: #555560;
+    margin-bottom: 14px;
+}
+
+.resume-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.ca-btn {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 5px;
+    border: 0.5px solid #2a2a2e;
+    color: #888890;
+    background: transparent;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all .1s;
+}
+.ca-btn:hover { border-color: #6366f1; color: #a5b4fc; }
+.ca-btn.ca-primary {
+    background: #1e1e28;
+    color: #a5b4fc;
+    border-color: #3730a3;
+}
+.ca-btn.ca-danger:hover { border-color: #f87171; color: #f87171; }
+
+.recommend-panel {
+    background: #111114;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 20px;
+}
+
+.recommend-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: #e8e8ea;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.recommend-subtitle {
+    font-size: 11px;
+    color: #555560;
+    font-weight: 400;
+}
+
+.recommend-input-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin-bottom: 14px;
+}
+
+.recommend-textarea {
+    flex: 1;
+    background: #0d0d0f;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 13px;
+    color: #e8e8ea;
+    font-family: inherit;
+    resize: vertical;
+    outline: none;
+}
+.recommend-textarea:focus { border-color: #6366f1; }
+.recommend-textarea::placeholder { color: #3a3a42; }
+
+.recommendation-result {
+    background: #0d0d0f;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.rec-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.rec-label { font-size: 10px; color: #555560; margin-bottom: 3px; }
+.rec-winner { font-size: 15px; font-weight: 500; color: #e8e8ea; }
+.rec-score { font-size: 32px; font-weight: 500; color: #4ade80; }
+
+.rec-reasoning {
+    font-size: 12px;
+    color: #888890;
+    line-height: 1.6;
+    margin-bottom: 14px;
+    padding-bottom: 14px;
+    border-bottom: 0.5px solid #2a2a2e;
+}
+
+.rec-scores { display: flex; flex-direction: column; gap: 8px; }
+
+.rec-score-item {
+    display: grid;
+    grid-template-columns: 160px 1fr 40px;
+    align-items: center;
+    gap: 10px;
+}
+
+.rec-score-name { font-size: 12px; color: #888890; }
+.rec-score-name-best { color: #e8e8ea; }
+
+.rec-score-bar-wrap {
+    height: 4px;
+    background: #1e1e22;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.rec-score-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width .3s;
+}
+
+.rec-score-val { font-size: 12px; color: #555560; text-align: right; }
+.rec-score-val-best { color: #4ade80; }
+
+.resume-content-textarea {
+    min-height: 200px;
+    resize: vertical;
+    line-height: 1.6;
+    font-size: 12px;
+}

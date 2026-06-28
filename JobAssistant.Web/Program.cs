@@ -14,4 +14,6 @@ builder.Services.AddScoped(sp => new HttpClient
 
 builder.Services.AddScoped<ApplicationService>();
 
+builder.Services.AddScoped<ResumeService>();
+
 await builder.Build().RunAsync();
