@@ -26,6 +26,7 @@ builder.Services.AddScoped<ResumeRecommendationService>();
 builder.Services.AddScoped<InterviewRepository>();
 builder.Services.AddScoped<InterviewGeneratorService>();
 builder.Services.AddScoped<InterviewBankChatService>();
+builder.Services.AddScoped<CareerAdvisorService>();
 
 var app = builder.Build();
 app.UseCors();
@@ -62,6 +63,17 @@ app.MapPost("/api/chat", async (ChatRequest request, CareerChatService chatServi
         return Results.BadRequest("Message is required.");
 
     var response = await chatService.ChatAsync(request);
+    return Results.Ok(response);
+});
+
+app.MapPost("/api/career-chat", async (
+    CareerChatRequest request,
+    CareerAdvisorService svc) =>
+{
+    if (string.IsNullOrWhiteSpace(request.UserMessage))
+        return Results.BadRequest("Message is required.");
+
+    var response = await svc.ChatAsync(request);
     return Results.Ok(response);
 });
 

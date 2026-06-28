@@ -3559,8 +3559,8 @@ app.MapPost("/api/chat", async (ChatRequest request, CareerChatService chatServi
 
 var apps = app.MapGroup("/api/applications");
 
-apps.MapGet("/", async (ApplicationRepository repo, string? status = null) =>
-    Results.Ok(await repo.GetAllAsync(status)));
+apps.MapGet("/", async (ApplicationRepository repo, string? status = null, string? q = null) =>
+    Results.Ok(await repo.GetAllAsync(status, q)));
 
 apps.MapGet("/stats", async (ApplicationRepository repo) =>
     Results.Ok(await repo.GetStatsAsync()));
@@ -3829,15 +3829,34 @@ ALTER TABLE ""Applications"" ADD COLUMN IF NOT EXISTS ""JobDescription"" TEXT;
         await cmd.ExecuteNonQueryAsync();
     }
 
-    public async Task<List<ApplicationSummary>> GetAllAsync(string? status = null)
+    public async Task<List<ApplicationSummary>> GetAllAsync(string? status = null, string? search = null)
     {
         var list = new List<ApplicationSummary>();
         var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""JobUrl"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""AppliedAt"", ""CreatedAt"", ""Priority""
-FROM ""Applications""";
-        if (!string.IsNullOrEmpty(status)) sql += @" WHERE ""Status"" = $1";
+FROM ""Applications"" WHERE 1=1";
+
+        var paramIndex = 1;
+
+        if (!string.IsNullOrEmpty(status))
+        {
+            sql += $@" AND ""Status"" = ${paramIndex}";
+            paramIndex++;
+        }
+
+        if (!string.IsNullOrEmpty(search))
+        {
+            sql += $@" AND (""CompanyName"" ILIKE ${paramIndex} OR ""Position"" ILIKE ${paramIndex} OR ""Notes"" ILIKE ${paramIndex} OR ""JobDescription"" ILIKE ${paramIndex})";
+            paramIndex++;
+        }
+
         sql += @" ORDER BY ""Priority"" ASC, ""CreatedAt"" DESC";
+
         await using var cmd = db.CreateCommand(sql);
-        if (!string.IsNullOrEmpty(status)) cmd.Parameters.AddWithValue(status);
+        if (!string.IsNullOrEmpty(status))
+            cmd.Parameters.AddWithValue(status);
+        if (!string.IsNullOrEmpty(search))
+            cmd.Parameters.AddWithValue($"%{search}%");
+
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
@@ -5359,7 +5378,23 @@ File: JobAssistant.Web/Pages/Applications.razor
     </div>
 }
 
-<div style="margin: 20px 0; display: flex; gap: 8px;">
+<!-- Search Box -->
+<div class="search-bar">
+    <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"></circle>
+        <path d="m21 21-4.35-4.35"></path>
+    </svg>
+    <input class="search-input" 
+           placeholder="Search by company, position, notes..." 
+           @bind="searchQuery" 
+           @bind:event="oninput" />
+    @if (!string.IsNullOrEmpty(searchQuery))
+    {
+        <button class="search-clear" @onclick="() => { searchQuery = string.Empty; LoadData(); }">✕</button>
+    }
+</div>
+
+<div style="margin: 20px 0; display: flex; gap: 8px; align-items: center;">
     @foreach (var filter in new[] { "All", "Active", "Interview", "Offer", "Rejected" })
     {
         <button class="chat-suggestion-chip @(activeFilter == filter ? "active" : "")"
@@ -5368,11 +5403,27 @@ File: JobAssistant.Web/Pages/Applications.razor
             @filter
         </button>
     }
+    <div style="margin-left: auto; font-size: 11px; color: #555560;">
+        @filteredApps.Count() result@(filteredApps.Count() == 1 ? "" : "s")
+    </div>
 </div>
 
 @if (isLoading)
 {
     <div class="loading">Loading applications...</div>
+}
+else if (filteredApps.Count() == 0)
+{
+    <div class="loading">
+        @if (!string.IsNullOrEmpty(searchQuery))
+        {
+            <span>No applications match "@searchQuery"</span>
+        }
+        else
+        {
+            <span>No applications found.</span>
+        }
+    </div>
 }
 else
 {
@@ -5531,7 +5582,6 @@ else
         <div class="modal" style="width: 600px;" @onclick:stopPropagation="true">
             <div class="modal-title">Edit Application</div>
 
-            <!-- Tab bar -->
             <div class="modal-tabs">
                 <button class="modal-tab @(activeModalTab == "details" ? "modal-tab-active" : "")"
                         @onclick='() => activeModalTab = "details"'>
@@ -5549,17 +5599,16 @@ else
 
             @if (activeModalTab == "details")
             {
-                <!-- Details tab -->
                 <div class="form-group">
                     <label class="form-label">Company Name</label>
                     <input class="form-input" @bind="editCompanyName" />
                 </div>
                 <div class="form-group">
                     <label class="form-label">Job Description</label>
-                    <textarea class="form-textarea" 
-                      placeholder="Paste the full job description here..."
-                      style="min-height: 120px;"
-                      @bind="editJobDescription"></textarea>
+                    <textarea class="form-textarea"
+                              placeholder="Paste the full job description here..."
+                              style="min-height: 120px;"
+                              @bind="editJobDescription"></textarea>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Position</label>
@@ -5606,7 +5655,6 @@ else
             }
             else
             {
-                <!-- Interview Prep tab -->
                 <div class="interview-tab-content">
                     @if (isLoadingQuestions)
                     {
@@ -5638,7 +5686,6 @@ else
                                 @(isGenerating ? "Regenerating..." : "↺ Regenerate")
                             </button>
                         </div>
-
                         <div style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto">
                             @foreach (var q in appQuestions)
                             {
@@ -5679,6 +5726,7 @@ else
     List<ApplicationSummary> applications = new();
     DashboardStats? stats;
     string activeFilter = "All";
+    string searchQuery = "";
     bool isLoading = true;
     List<(string Role, string TextContent, DataTable? Table)> chatMessages = new();
     string chatInput = "";
@@ -5686,7 +5734,7 @@ else
     bool showAddDialog = false;
     string editJobDescription = "";
     string? errorMessage = null;
-    
+
     class ApplicationFormModel
     {
         public string CompanyName { get; set; } = "";
@@ -5697,7 +5745,6 @@ else
     ApplicationFormModel formModel = new();
     DateTime addDateOnly = DateTime.Today;
 
-    // Edit modal state
     bool showEditModal = false;
     ApplicationDetail? editingApp = null;
     string editCompanyName = "";
@@ -5708,7 +5755,6 @@ else
     DateTimeOffset? editAppliedAt = null;
     bool isSaving = false;
 
-    // Interview tab
     string activeModalTab = "details";
     List<InterviewQuestion> appQuestions = new();
     bool isGenerating = false;
@@ -5731,12 +5777,18 @@ else
     async Task LoadData()
     {
         isLoading = true;
-        applications = await AppService.GetAllAsync();
+        applications = await AppService.GetAllAsync(
+            activeFilter == "All" ? null : activeFilter,
+            string.IsNullOrWhiteSpace(searchQuery) ? null : searchQuery);
         stats = await AppService.GetStatsAsync();
         isLoading = false;
     }
 
-    void SetFilter(string filter) => activeFilter = filter;
+    void SetFilter(string filter)
+    {
+        activeFilter = filter;
+        _ = LoadData();
+    }
 
     async Task SaveApplication()
     {
@@ -5828,37 +5880,29 @@ else
     async Task GenerateQuestions()
     {
         if (editingApp == null) return;
-    
-        // از editJobDescription استفاده کن (نه editingApp.JobDescription)
         var jobDesc = editJobDescription;
-    
         if (string.IsNullOrWhiteSpace(jobDesc))
         {
-            // نمایش پیام خطا
             errorMessage = "Please fill in the Job Description in the Details tab first.";
             activeModalTab = "details";
             StateHasChanged();
             return;
         }
-    
         isGenerating = true;
         StateHasChanged();
-    
         try
         {
             var defaultResumes = await ResumeService.GetAllAsync();
             var resume = defaultResumes.FirstOrDefault(r => r.IsDefault)
-                         ?? defaultResumes.FirstOrDefault();
+                ?? defaultResumes.FirstOrDefault();
             var resumeDetail = resume != null
                 ? await ResumeService.GetByIdAsync(resume.Id)
                 : null;
-        
             appQuestions = await InterviewService.GenerateAsync(new GenerateQuestionsRequest(
                 editingApp.Id,
                 jobDesc,
                 resumeDetail?.Content ?? ""
             ));
-        
             if (appQuestions.Count == 0)
             {
                 errorMessage = "Failed to generate questions. Make sure Ollama is running.";
@@ -6312,70 +6356,135 @@ File: JobAssistant.Web/Pages/InterviewBank.razor
 }
 else
 {
+    <!-- Search Box -->
+    <div class="search-bar" style="margin-bottom: 16px;">
+        <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <path d="m21 21-4.35-4.35"></path>
+        </svg>
+        <input class="search-input"
+               placeholder="Search questions, hints, notes..."
+               @bind="searchQuery"
+               @bind:event="oninput"/>
+        @if (!string.IsNullOrEmpty(searchQuery))
+        {
+            <button class="search-clear" @onclick="() => searchQuery = string.Empty">✕</button>
+        }
+    </div>
+
     <!-- Filter chips -->
     <div class="filter-row" style="margin-bottom:16px">
         <button class="fc @(typeFilter == "All" ? "fc-active" : "")"
-                @onclick='() => typeFilter = "All"'>All</button>
+                @onclick='() => typeFilter = "All"'>All
+        </button>
         <button class="fc @(typeFilter == "Technical" ? "fc-active" : "")"
-                @onclick='() => typeFilter = "Technical"'>Technical</button>
+                @onclick='() => typeFilter = "Technical"'>Technical
+        </button>
         <button class="fc @(typeFilter == "Behavioral" ? "fc-active" : "")"
-                @onclick='() => typeFilter = "Behavioral"'>Behavioral</button>
+                @onclick='() => typeFilter = "Behavioral"'>Behavioral
+        </button>
         <button class="fc @(typeFilter == "AskThem" ? "fc-active" : "")"
-                @onclick='() => typeFilter = "AskThem"'>Ask them</button>
+                @onclick='() => typeFilter = "AskThem"'>Ask them
+        </button>
         <div style="margin-left:auto;display:flex;gap:6px">
             <button class="fc @(statusFilter == "All" ? "fc-active" : "")"
-                    @onclick='() => statusFilter = "All"'>All status</button>
+                    @onclick='() => statusFilter = "All"'>All status
+            </button>
             <button class="fc @(statusFilter == "NotPracticed" ? "fc-active" : "")"
-                    @onclick='() => statusFilter = "NotPracticed"'>Not practiced</button>
+                    @onclick='() => statusFilter = "NotPracticed"'>Not practiced
+            </button>
             <button class="fc @(statusFilter == "NeedsWork" ? "fc-active" : "")"
-                    @onclick='() => statusFilter = "NeedsWork"'>Needs work</button>
+                    @onclick='() => statusFilter = "NeedsWork"'>Needs work
+            </button>
             <button class="fc @(statusFilter == "Practiced" ? "fc-active" : "")"
-                    @onclick='() => statusFilter = "Practiced"'>Practiced</button>
+                    @onclick='() => statusFilter = "Practiced"'>Practiced
+            </button>
         </div>
     </div>
 
     <!-- Questions list -->
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
-        @foreach (var q in FilteredQuestions)
-        {
-            <div class="question-card">
-                <div class="question-card-header">
-                    <span class="question-type-badge qtype-@q.QuestionType.ToLower()">
-                        @GetTypeLabel(q.QuestionType)
-                    </span>
-                    <select class="status-select status-@q.Status.ToLower()"
-                            value="@q.Status"
-                            @onchange="e => UpdateStatus(q.Id, e.Value?.ToString() ?? q.Status)">
-                        <option value="NotPracticed">Not practiced</option>
-                        <option value="NeedsWork">Needs work</option>
-                        <option value="Practiced">Practiced ✓</option>
-                    </select>
-                </div>
-
-                <div class="question-text">@q.Question</div>
-
-                @if (!string.IsNullOrEmpty(q.Hint))
-                {
-                    <div class="question-hint">
-                        <span style="color:#6366f1">💡</span> @q.Hint
-                    </div>
-                }
-
-                <div class="question-note-row">
-                    <textarea class="question-note-input"
-                              placeholder="Add your personal note..."
-                              value="@(q.PersonalNote ?? string.Empty)"
-                              @onchange="e => UpdateNote(q.Id, e.Value?.ToString() ?? string.Empty)">
-                    </textarea>
-                </div>
-            </div>
-        }
-
         @if (FilteredQuestions.Count == 0)
         {
-            <div class="loading">No questions match your filters.</div>
+            <div class="loading">
+                @if (!string.IsNullOrEmpty(searchQuery))
+                {
+                    <span>No questions match "@searchQuery"</span>
+                }
+                else
+                {
+                    <span>No questions match your filters.</span>
+                }
+            </div>
+        }
+        else
+        {
+            @foreach (var q in FilteredQuestions)
+            {
+                <div class="question-card">
+                    <div class="question-card-header">
+                        <span class="question-type-badge qtype-@q.QuestionType.ToLower()">
+                            @GetTypeLabel(q.QuestionType)
+                        </span>
+                        <select class="status-select status-@q.Status.ToLower()"
+                                value="@q.Status"
+                                @onchange="e => UpdateStatus(q.Id, e.Value?.ToString() ?? q.Status)">
+                            <option value="NotPracticed">Not practiced</option>
+                            <option value="NeedsWork">Needs work</option>
+                            <option value="Practiced">Practiced ✓</option>
+                        </select>
+                    </div>
+                    <div class="question-text">@q.Question</div>
+                    @if (!string.IsNullOrEmpty(q.Hint))
+                    {
+                        <div class="question-hint">
+                            <span style="color:#6366f1">💡</span> @q.Hint
+                        </div>
+                    }
+                    <div class="question-note-row">
+                        <textarea class="question-note-input"
+                                  placeholder="Add your personal note..."
+                                  value="@(q.PersonalNote ?? string.Empty)"
+                                  @onchange="e => UpdateNote(q.Id, e.Value?.ToString() ?? string.Empty)">
+                        </textarea>
+                    </div>
+                </div>
+            }
         }
     </div>
+
+    <!-- Pagination -->
+    @if (TotalPages > 1)
+    {
+        <div class="pagination-container">
+            <button class="pagination-btn"
+                    @onclick="PreviousPage"
+                    disabled="@(CurrentPage == 1)">
+                ← Previous
+            </button>
+
+            <div class="pagination-info">
+                <span>Page </span>
+                <select class="page-select" @bind="CurrentPage">
+                    @for (int i = 1; i <= TotalPages; i++)
+                    {
+                        <option value="@i">@i</option>
+                    }
+                </select>
+                <span> of @TotalPages</span>
+                <span style="color:#555560;margin-left:8px">
+                    (@FilteredQuestions.Count questions)
+                </span>
+            </div>
+
+            <button class="pagination-btn"
+                    @onclick="NextPage"
+                    disabled="@(CurrentPage == TotalPages)">
+                Next →
+            </button>
+        </div>
+    }
 
     <!-- Interview Bank Chat -->
     <div class="chat-section">
@@ -6386,7 +6495,6 @@ else
             </div>
             <span class="chat-badge">AI powered</span>
         </div>
-
         @if (chatMessages.Count == 0)
         {
             <div class="chat-suggestions">
@@ -6404,7 +6512,6 @@ else
                 </button>
             </div>
         }
-
         <div class="chat-messages">
             @foreach (var msg in chatMessages)
             {
@@ -6443,13 +6550,12 @@ else
                 </div>
             }
         </div>
-
         <div class="chat-input-row">
             <input class="chat-input"
                    placeholder="Ask about your interview questions..."
                    @bind="chatInput"
                    @bind:event="oninput"
-                   @onkeydown="HandleKeyDown" />
+                   @onkeydown="HandleKeyDown"/>
             <button class="chat-send-btn"
                     @onclick="SendChat"
                     disabled="@(isChatLoading || string.IsNullOrWhiteSpace(chatInput))">
@@ -6463,7 +6569,13 @@ else
     List<InterviewQuestion> questions = new();
     string typeFilter = "All";
     string statusFilter = "All";
+    string searchQuery = "";
     bool isLoading = true;
+
+    // Pagination
+    const int PageSize = 10;
+    int CurrentPage = 1;
+    int TotalPages => Math.Max(1, (int)Math.Ceiling(FilteredQuestions.Count / (double)PageSize));
 
     // Chat
     List<ChatMsg> chatMessages = new();
@@ -6476,8 +6588,17 @@ else
         List<InterviewQuestion>? FilteredQuestions = null);
 
     List<InterviewQuestion> FilteredQuestions => questions
+        .Where(q => string.IsNullOrEmpty(searchQuery) ||
+                    q.Question.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+                    (q.Hint != null && q.Hint.Contains(searchQuery, StringComparison.OrdinalIgnoreCase)) ||
+                    (q.PersonalNote != null && q.PersonalNote.Contains(searchQuery, StringComparison.OrdinalIgnoreCase)))
         .Where(q => typeFilter == "All" || q.QuestionType == typeFilter)
         .Where(q => statusFilter == "All" || q.Status == statusFilter)
+        .ToList();
+
+    List<InterviewQuestion> PaginatedQuestions => FilteredQuestions
+        .Skip((CurrentPage - 1) * PageSize)
+        .Take(PageSize)
         .ToList();
 
     protected override async Task OnInitializedAsync()
@@ -6488,11 +6609,21 @@ else
 
     string GetTypeLabel(string type) => type switch
     {
-        "Technical"  => "Technical",
+        "Technical" => "Technical",
         "Behavioral" => "Behavioral",
-        "AskThem"    => "Ask them",
-        _            => type
+        "AskThem" => "Ask them",
+        _ => type
     };
+
+    void PreviousPage()
+    {
+        if (CurrentPage > 1) CurrentPage--;
+    }
+
+    void NextPage()
+    {
+        if (CurrentPage < TotalPages) CurrentPage++;
+    }
 
     async Task UpdateStatus(Guid id, string status)
     {
@@ -6547,6 +6678,7 @@ else
         if (e.Key == "Enter" && !e.ShiftKey)
             await SendChat();
     }
+
 }
 
 ================
@@ -6923,9 +7055,14 @@ namespace JobAssistant.Web.Services;
 
 public class ApplicationService(HttpClient http)
 {
-    public async Task<List<ApplicationSummary>> GetAllAsync(string? status = null)
+    public async Task<List<ApplicationSummary>> GetAllAsync(string? status = null, string? search = null)
     {
-        var url = string.IsNullOrEmpty(status) ? "/api/applications" : $"/api/applications?status={status}";
+        var url = "/api/applications?";
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(status)) parts.Add($"status={status}");
+        if (!string.IsNullOrEmpty(search)) parts.Add($"q={Uri.EscapeDataString(search)}");
+        url += string.Join("&", parts);
+        if (url.EndsWith("?")) url = url.TrimEnd('?');
         return await http.GetFromJsonAsync<List<ApplicationSummary>>(url) ?? new();
     }
 
@@ -7928,6 +8065,120 @@ textarea::placeholder { color: #3a3a42; }
 .chat-mini-result:last-child { border-bottom: none; }
 
 .interview-tab-content { min-height: 200px; }
+
+
+
+
+
+
+/* --- Search Bar Styles --- */
+.search-bar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    background: #111114;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 8px;
+    padding: 0 12px;
+    margin-bottom: 16px;
+    transition: border-color 0.15s;
+}
+.search-bar:focus-within {
+    border-color: #6366f1;
+}
+.search-icon {
+    color: #555560;
+    flex-shrink: 0;
+}
+.search-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #e8e8ea;
+    font-size: 13px;
+    font-family: inherit;
+    padding: 10px 8px;
+}
+.search-input::placeholder {
+    color: #3a3a42;
+}
+.search-clear {
+    background: transparent;
+    border: none;
+    color: #555560;
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 12px;
+    border-radius: 4px;
+    transition: all 0.1s;
+}
+.search-clear:hover {
+    background: #1a1a1e;
+    color: #888890;
+}
+
+/* --- Pagination Styles --- */
+.pagination-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 20px 0;
+    border-top: 0.5px solid #2a2a2e;
+    margin-top: 20px;
+}
+.pagination-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #111114;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 6px;
+    padding: 8px 14px;
+    color: #888890;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.1s;
+}
+.pagination-btn:hover:not(:disabled) {
+    border-color: #6366f1;
+    color: #a5b4fc;
+    background: #1a1a1e;
+}
+.pagination-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+.pagination-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #888890;
+}
+.page-select {
+    background: #111114;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #e8e8ea;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    outline: none;
+    min-width: 50px;
+    text-align: center;
+}
+.page-select:focus {
+    border-color: #6366f1;
+}
+.page-select option {
+    background: #111114;
+    color: #e8e8ea;
+}
 
 ================
 File: JobAssistant.Web/wwwroot/index.html
