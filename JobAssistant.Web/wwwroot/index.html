@@ -10,37 +10,119 @@
 </head>
 <body>
 <div id="app">Loading...</div>
+<script src="_framework/blazor.webassembly.js"></script>
 <script>
-    window.openPrintView = function(text) {
-        var printWindow = window.open('', '_blank');
-        printWindow.document.write(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Resume</title>
-                <style>
-                    body {
-                        font-family: 'Georgia', serif;
-                        max-width: 780px;
-                        margin: 40px auto;
-                        padding: 0 20px;
-                        color: #1a1a1a;
-                        line-height: 1.6;
-                        font-size: 13px;
-                        white-space: pre-wrap;
-                    }
-                    @media print {
-                        body { margin: 0; }
-                    }
-                </style>
-            </head>
-            <body>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</body>
-            </html>
-        `);
-        printWindow.document.close();
-        setTimeout(function() { printWindow.print(); }, 300);
+    window.openPrintView = function(content) {
+        const win = window.open('', '_blank');
+        if (!win) {
+            alert('Please allow popups for this site to download PDF.');
+            return;
+        }
+        win.document.write(`
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <title>Resume</title>
+                    <style>
+                        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+                        body {
+                            font-family: 'Georgia', serif;
+                            font-size: 11pt;
+                            color: #1a1a1a;
+                            background: #fff;
+                            padding: 0;
+                        }
+
+                        .page {
+                            max-width: 210mm;
+                            margin: 0 auto;
+                            padding: 20mm 18mm;
+                            min-height: 297mm;
+                        }
+
+                        /* print settings */
+                        @media print {
+                            body { background: white; }
+                            .page { padding: 15mm 15mm; }
+                            .no-print { display: none; }
+                        }
+
+                        /* دکمه print */
+                        .print-bar {
+                            position: fixed;
+                            top: 0;
+                            left: 0;
+                            right: 0;
+                            background: #1a1a1a;
+                            color: #fff;
+                            padding: 10px 20px;
+                            display: flex;
+                            align-items: center;
+                            justify-content: space-between;
+                            font-family: 'Inter', sans-serif;
+                            font-size: 13px;
+                            z-index: 100;
+                        }
+
+                        .print-btn {
+                            background: #6366f1;
+                            color: white;
+                            border: none;
+                            padding: 7px 16px;
+                            border-radius: 6px;
+                            font-size: 13px;
+                            cursor: pointer;
+                            font-family: inherit;
+                        }
+                        .print-btn:hover { background: #4f46e5; }
+
+                        .close-btn {
+                            background: transparent;
+                            color: #888;
+                            border: 1px solid #444;
+                            padding: 7px 16px;
+                            border-radius: 6px;
+                            font-size: 13px;
+                            cursor: pointer;
+                            font-family: inherit;
+                        }
+                        .close-btn:hover { color: #fff; border-color: #666; }
+
+                        .content-area {
+                            margin-top: 52px;
+                        }
+
+                        /* متن رزومه */
+                        .resume-text {
+                            white-space: pre-wrap;
+                            font-family: 'Georgia', serif;
+                            font-size: 10.5pt;
+                            line-height: 1.7;
+                            color: #1a1a1a;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="print-bar no-print">
+                        <span>Resume Preview — Press Print to save as PDF</span>
+                        <div style="display:flex;gap:8px">
+                            <button class="close-btn" onclick="window.close()">Close</button>
+                            <button class="print-btn" onclick="window.print()">🖨 Print / Save PDF</button>
+                        </div>
+                    </div>
+
+                    <div class="content-area">
+                        <div class="page">
+                            <div class="resume-text">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+                        </div>
+                    </div>
+                </body>
+                </html>
+            `);
+        win.document.close();
     };
 </script>
-<script src="_framework/blazor.webassembly.js"></script>
 </body>
 </html>
