@@ -1115,3 +1115,112 @@ textarea::placeholder { color: #3a3a42; }
     text-align: center;
 }
 
+
+
+
+
+
+
+
+
+/* --- Resume Tailor Page --- */
+.tailor-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+.step-num {
+    color: #6366f1;
+    font-size: 13px;
+}
+
+.style-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.style-option {
+    background: #0d0d0f;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 8px;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: border-color .1s, background .1s;
+}
+.style-option:hover { border-color: #3730a3; }
+.style-option-selected {
+    background: #1a1a2a;
+    border-color: #6366f1;
+}
+
+.style-option-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: #e8e8ea;
+    margin-bottom: 4px;
+}
+
+.style-option-desc {
+    font-size: 11px;
+    color: #555560;
+    line-height: 1.5;
+}
+
+.result-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.tailored-content {
+    background: #0d0d0f;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 13px;
+    color: #c8c8cc;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    margin-bottom: 12px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.changes-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.change-card {
+    background: #0d0d0f;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 7px;
+    padding: 12px;
+}
+
+.change-card-title {
+    font-size: 10px;
+    color: #555560;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-bottom: 8px;
+}
+
+.change-item {
+    font-size: 12px;
+    color: #888890;
+    padding: 4px 0;
+    border-bottom: 0.5px solid #1a1a1e;
+    display: flex;
+    gap: 6px;
+}
+.change-item:last-child { border-bottom: none; }
+
+

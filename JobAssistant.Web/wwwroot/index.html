@@ -10,6 +10,37 @@
 </head>
 <body>
 <div id="app">Loading...</div>
+<script>
+    window.openPrintView = function(text) {
+        var printWindow = window.open('', '_blank');
+        printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Resume</title>
+                <style>
+                    body {
+                        font-family: 'Georgia', serif;
+                        max-width: 780px;
+                        margin: 40px auto;
+                        padding: 0 20px;
+                        color: #1a1a1a;
+                        line-height: 1.6;
+                        font-size: 13px;
+                        white-space: pre-wrap;
+                    }
+                    @media print {
+                        body { margin: 0; }
+                    }
+                </style>
+            </head>
+            <body>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</body>
+            </html>
+        `);
+        printWindow.document.close();
+        setTimeout(function() { printWindow.print(); }, 300);
+    };
+</script>
 <script src="_framework/blazor.webassembly.js"></script>
 </body>
 </html>

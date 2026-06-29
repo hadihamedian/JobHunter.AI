@@ -27,6 +27,7 @@ builder.Services.AddScoped<InterviewRepository>();
 builder.Services.AddScoped<InterviewGeneratorService>();
 builder.Services.AddScoped<InterviewBankChatService>();
 builder.Services.AddScoped<CareerAdvisorService>();
+builder.Services.AddScoped<ResumeTailorService>();
 
 var app = builder.Build();
 app.UseCors();
@@ -75,6 +76,20 @@ app.MapPost("/api/career-chat", async (
 
     var response = await svc.ChatAsync(request);
     return Results.Ok(response);
+});
+
+app.MapPost("/api/tailor", async (
+    TailorRequest request,
+    ResumeTailorService svc) =>
+{
+    if (request.ResumeId == Guid.Empty ||
+        string.IsNullOrWhiteSpace(request.JobDescription))
+        return Results.BadRequest("ResumeId and JobDescription are required.");
+
+    var result = await svc.TailorAsync(request);
+    return result is null
+        ? Results.NotFound("Resume not found or AI failed.")
+        : Results.Ok(result);
 });
 
 var apps = app.MapGroup("/api/applications");
