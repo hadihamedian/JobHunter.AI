@@ -95,13 +95,18 @@
                         }
 
                         /* متن رزومه */
-                        .resume-text {
-                            white-space: pre-wrap;
-                            font-family: 'Georgia', serif;
-                            font-size: 10.5pt;
-                            line-height: 1.7;
-                            color: #1a1a1a;
+                        .resume-text { font-family: 'Georgia', serif; font-size: 10.5pt; line-height: 1.6; color: #1a1a1a; }
+                        .resume-text h2 {
+                            font-size: 13pt; font-weight: 700; margin: 16px 0 6px;
+                            border-bottom: 1px solid #1a1a1a; padding-bottom: 2px;
+                            text-transform: uppercase; letter-spacing: .03em;
                         }
+                        .resume-text h2:first-of-type { margin-top: 0; }
+                        .resume-text h3 { font-size: 11pt; font-weight: 700; margin: 10px 0 2px; }
+                        .resume-text p { margin: 4px 0; }
+                        .resume-text ul { margin: 4px 0 8px 18px; padding: 0; }
+                        .resume-text li { margin-bottom: 2px; }
+                        .resume-text strong { font-weight: 700; }
                     </style>
                 </head>
                 <body>
@@ -115,7 +120,8 @@
 
                     <div class="content-area">
                         <div class="page">
-                            <div class="resume-text">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+<!--                            <div class="resume-text">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>-->
+                                <div class="resume-text">${content}</div>
                         </div>
                     </div>
                 </body>

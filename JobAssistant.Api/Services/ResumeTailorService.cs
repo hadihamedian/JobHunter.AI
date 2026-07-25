@@ -22,32 +22,41 @@ public class ResumeTailorService(
             ? "Aggressively rewrite sections to maximize keyword density. Add all relevant missing keywords naturally. Reorder skills by relevance to the job."
             : "Make conservative changes only. Keep the candidate's original voice and style. Only add clearly missing keywords and make minimal rewrites.";
 
-        var prompt = $@"You are an expert ATS resume optimizer.
+        var prompt = $@"You are an expert ATS resume optimizer and professional resume formatter.
 
 Style instruction: {styleInstruction}
 
-Original Resume:
+Original Resume (Markdown):
 {resume.Content}
 
 Job Description:
 {request.JobDescription}
 
 Task:
-1. Rewrite the resume to better match the job description
-2. Keep the same overall structure and sections
-3. Add relevant keywords naturally
-4. Make achievements more specific and measurable where possible
-5. Keep it truthful — only enhance what is already there, do not invent experience
+1. Rewrite the resume to better match the job description.
+2. Keep the same overall structure and sections as the original.
+3. Add relevant keywords naturally, based only on skills/experience the candidate actually has.
+4. Make achievements more specific and measurable where possible.
+5. Keep it truthful — never invent employers, titles, dates, or skills not present in the original.
 
-Return ONLY this JSON object, no explanation, no markdown:
+OUTPUT FORMAT — the resume MUST be valid Markdown, following these exact rules:
+- Use ""## "" for each major section title (e.g. ## Summary, ## Experience, ## Skills, ## Education).
+- Use ""### "" for each job entry, formatted as: ### Job Title — Company Name (Start – End)
+- Use ""- "" for every bullet point under an experience entry (max 4-5 bullets per job). Never nest bullets.
+- Use ""**bold**"" only for key metrics or the technology-stack line inside Skills — not for whole sentences.
+- Do NOT use tables, images, emoji, or raw HTML tags — this will be parsed by ATS systems.
+- Do NOT add horizontal rules (---) between sections.
+- Keep total length equivalent to 1-2 printed A4 pages.
+
+Return ONLY this JSON object, no explanation, no markdown code fences around the JSON itself:
 {{
-   ""tailoredContent"": ""<the complete rewritten resume as plain text>"",
+   ""tailoredContent"": ""<the complete rewritten resume as a single Markdown string, using \\n for line breaks>"",
    ""keywordsAdded"": [""keyword1"", ""keyword2""],
    ""sectionsRewritten"": [""Summary — aligned to role"", ""Experience — added metrics""],
    ""estimatedAtsImprovement"": <number 1-30>
 }}
 
-Important: tailoredContent must be the COMPLETE resume text.";
+Important: tailoredContent must be the COMPLETE resume in Markdown format, not plain text.";
 
         var payload = new
         {

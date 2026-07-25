@@ -4,6 +4,7 @@
 @inject IJSRuntime JS
 @using JobAssistant.Web.Models
 @using JobAssistant.Web.Services
+@using Markdig
 
 <div class="page-header">
     <div>
@@ -99,6 +100,13 @@
     }
 </button>
 
+@if (isTailoring)
+{
+    <div style="font-size:11px;color:#555560;text-align:center;margin-top:-10px;margin-bottom:16px">
+        This may take 1-2 minutes — the model is running locally on your system, do not close the page.
+    </div>
+}
+
 @if (!string.IsNullOrEmpty(errorMessage))
 {
     <div class="error">@errorMessage</div>
@@ -129,7 +137,7 @@
         </div>
 
         <!-- Tailored content -->
-        <div class="tailored-content">@result.TailoredContent</div>
+        <div class="tailored-content markdown-body">@((MarkupString)RenderMarkdown(result.TailoredContent))</div>
 
         <!-- Changes summary -->
         <div class="changes-grid">
@@ -232,9 +240,17 @@
         resumes = await ResumeService.GetAllAsync();
     }
 
+    static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .DisableHtml()   // امنیت: خروجی مدل رو نمی‌گذاره HTML خام تزریق کنه
+        .Build();
+
+    string RenderMarkdown(string markdown) => Markdig.Markdown.ToHtml(markdown ?? "", Pipeline);
+
     async Task OpenPrintView()
     {
         if (result is null) return;
-        await JS.InvokeVoidAsync("openPrintView", result.TailoredContent);
+        var html = RenderMarkdown(result.TailoredContent);
+        await JS.InvokeVoidAsync("openPrintView", html);
     }
 }
