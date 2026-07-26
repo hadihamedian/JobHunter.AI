@@ -13,7 +13,7 @@ public class CareerAdvisorService(
     {
         var ollamaUrl = configuration["Ollama:Url"]
             ?? "http://localhost:11434/api/generate";
-        var model = configuration["Ollama:Model"] ?? "qwen2.5-coder:7b";
+        var model = configuration["Ollama:Model"] ?? "llama3.1:8b";
 
         // گرفتن همه داده‌ها
         var resumes = await resumeRepository.GetAllWithContentAsync();
