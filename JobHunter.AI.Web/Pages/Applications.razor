@@ -1,0 +1,646 @@
+﻿@page "/applications"
+@using JobHunter.AI.Web.Models
+@using JobHunter.AI.Web.Services
+@inject ApplicationService AppService
+@inject InterviewService InterviewService
+@inject ResumeService ResumeService
+
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+    <h2>Applications</h2>
+    <button class="chat-send-btn" @onclick="() => showAddDialog = true">Add application</button>
+</div>
+
+@if (stats != null)
+{
+    <div class="grid-2" style="grid-template-columns: repeat(4, 1fr);">
+        <div class="stat-card">
+            <div class="stat-label">TOTAL APPLICATIONS</div>
+            <div class="stat-value">@stats.TotalApplications</div>
+            <div class="stat-sub">+@stats.AppliedThisMonth this month</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">ACTIVE INTERVIEWS</div>
+            <div class="stat-value">@stats.ActiveInterviews</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">RESPONSE RATE</div>
+            <div class="stat-value">@stats.ResponseRate%</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">REJECTED</div>
+            <div class="stat-value">@stats.RejectedThisMonth</div>
+            <div class="stat-sub">this month</div>
+        </div>
+    </div>
+}
+
+<!-- Search Box -->
+<div class="search-bar">
+    <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"></circle>
+        <path d="m21 21-4.35-4.35"></path>
+    </svg>
+    <input class="search-input" 
+           placeholder="Search by company, position, notes..." 
+           @bind="searchQuery" 
+           @bind:event="oninput" />
+    @if (!string.IsNullOrEmpty(searchQuery))
+    {
+        <button class="search-clear" @onclick="() => { searchQuery = string.Empty; LoadData(); }">✕</button>
+    }
+</div>
+
+<div style="margin: 20px 0; display: flex; gap: 8px; align-items: center;">
+    @foreach (var filter in new[] { "All", "Active", "Interview", "Offer", "Rejected" })
+    {
+        <button class="chat-suggestion-chip @(activeFilter == filter ? "active" : "")"
+                style="@(activeFilter == filter ? "background: #252535; color: #fff;" : "")"
+                @onclick="() => SetFilter(filter)">
+            @filter
+        </button>
+    }
+    <div style="margin-left: auto; font-size: 11px; color: #555560;">
+        @filteredApps.Count() result@(filteredApps.Count() == 1 ? "" : "s")
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="loading">Loading applications...</div>
+}
+else if (filteredApps.Count() == 0)
+{
+    <div class="loading">
+        @if (!string.IsNullOrEmpty(searchQuery))
+        {
+            <span>No applications match "@searchQuery"</span>
+        }
+        else
+        {
+            <span>No applications found.</span>
+        }
+    </div>
+}
+else
+{
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width:50px"></th>
+                <th>Company / Position</th>
+                <th>Resume</th>
+                <th>Date</th>
+                <th>Status</th>
+                <th style="width:70px"></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var app in filteredApps)
+            {
+                <tr>
+                    <td>
+                        <div style="display:flex;flex-direction:column;gap:2px;align-items:center">
+                            <button class="priority-btn" @onclick="() => MoveUp(app.Id)">↑</button>
+                            <button class="priority-btn" @onclick="() => MoveDown(app.Id)">↓</button>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="co">@app.CompanyName</div>
+                        <div class="pos">@app.Position</div>
+                        @if (!string.IsNullOrEmpty(app.JobUrl))
+                        {
+                            <a href="@app.JobUrl" target="_blank" class="job-url-link">
+                                View posting ↗
+                            </a>
+                        }
+                    </td>
+                    <td class="src">@(app.ResumeVersion ?? "—")</td>
+                    <td class="dt">@(app.AppliedAt?.ToString("MMM d") ?? app.CreatedAt.ToString("MMM d"))</td>
+                    <td><span class="chip @GetStatusClass(app.Status)">@GetStatusLabel(app.Status)</span></td>
+                    <td>
+                        <button class="av-btn" @onclick="() => OpenEditModal(app.Id)">Edit →</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<div class="chat-section" style="margin-top: 24px;">
+    <div class="chat-header">
+        <span>💬 Ask about your data</span>
+        <span style="font-size: 10px; background: #2a1f0a; color: #fbbf24; padding: 2px 6px; border-radius: 4px;">AI Powered</span>
+    </div>
+    <div class="chat-suggestions">
+        <button class="chat-suggestion-chip" @onclick="@(() => QuickAsk("Which companies haven't replied?"))">Unreplied companies?</button>
+        <button class="chat-suggestion-chip" @onclick="@(() => QuickAsk("My response rate by source?"))">Response rate by source?</button>
+        <button class="chat-suggestion-chip" @onclick="@(() => QuickAsk("How many interviews this month?"))">Interviews this month?</button>
+    </div>
+    <div class="chat-messages">
+        @foreach (var msg in chatMessages)
+        {
+            if (msg.Role == "user")
+            {
+                <div class="chat-msg-user" dir="auto">@msg.TextContent</div>
+            }
+            else
+            {
+                <div class="chat-msg-ai">
+                    <div class="chat-msg-ai-text" dir="auto">@msg.TextContent</div>
+                    @if (msg.Table != null && msg.Table.Rows.Any())
+                    {
+                        <table class="chat-mini-table" dir="ltr">
+                            <thead>
+                                <tr>
+                                    @foreach (var col in msg.Table.Columns)
+                                    {
+                                        <th>@col</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in msg.Table.Rows)
+                                {
+                                    <tr>
+                                        @foreach (var cell in row)
+                                        {
+                                            <td>@cell</td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            }
+        }
+        @if (isChatLoading)
+        {
+            <div class="chat-loading-dots">...</div>
+        }
+    </div>
+    <div class="chat-input-row">
+        <input class="chat-input" @bind="chatInput" @bind:event="oninput" @onkeydown="HandleChatKey" placeholder="Ask anything about your applications..." dir="auto" />
+        <button class="chat-send-btn" @onclick="SendChatMessage" disabled="@(isChatLoading || string.IsNullOrWhiteSpace(chatInput))">Send</button>
+    </div>
+</div>
+
+@if (showAddDialog)
+{
+    <div class="modal-overlay">
+        <div class="modal">
+            <div class="modal-title">Add New Application</div>
+            <div class="form-group">
+                <label class="form-label">Company Name</label>
+                <input class="form-input" @bind="formModel.CompanyName" />
+            </div>
+            <div class="form-group">
+                <label class="form-label">Position</label>
+                <input class="form-input" @bind="formModel.Position" />
+            </div>
+            <div class="form-group">
+                <label class="form-label">Source</label>
+                <select class="form-select" @bind="formModel.Source">
+                    <option value="LinkedIn">LinkedIn</option>
+                    <option value="Himalayas">Himalayas</option>
+                    <option value="Direct">Direct</option>
+                    <option value="Referral">Referral</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Status</label>
+                <select class="form-select" @bind="formModel.Status">
+                    <option value="Saved">Saved</option>
+                    <option value="Applied">Applied</option>
+                    <option value="HRInterview">HR Interview</option>
+                    <option value="TechnicalInterview">Technical Interview</option>
+                    <option value="FinalInterview">Final Interview</option>
+                    <option value="Offer">Offer</option>
+                    <option value="Rejected">Rejected</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Applied Date</label>
+                <input type="date" class="form-input" @bind="addDateOnly" />
+            </div>
+            <div class="modal-actions">
+                <button class="btn-cancel" @onclick="() => showAddDialog = false">Cancel</button>
+                <button class="chat-send-btn" @onclick="SaveApplication">Save</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (showEditModal && editingApp is not null)
+{
+    <div class="modal-overlay" @onclick="() => showEditModal = false">
+        <div class="modal" style="width: 600px;" @onclick:stopPropagation="true">
+            <div class="modal-title">Edit Application</div>
+
+            <div class="modal-tabs">
+                <button class="modal-tab @(activeModalTab == "details" ? "modal-tab-active" : "")"
+                        @onclick='() => activeModalTab = "details"'>
+                    Details
+                </button>
+                <button class="modal-tab @(activeModalTab == "interview" ? "modal-tab-active" : "")"
+                        @onclick='() => activeModalTab = "interview"'>
+                    Interview Prep
+                    @if (appQuestions.Count > 0)
+                    {
+                        <span class="tab-count">@appQuestions.Count</span>
+                    }
+                </button>
+            </div>
+
+            @if (activeModalTab == "details")
+            {
+                <div class="form-group">
+                    <label class="form-label">Company Name</label>
+                    <input class="form-input" @bind="editCompanyName" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Job Description</label>
+                    <textarea class="form-textarea"
+                              placeholder="Paste the full job description here..."
+                              style="min-height: 120px;"
+                              @bind="editJobDescription"></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Position</label>
+                    <input class="form-input" @bind="editPosition" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Status</label>
+                    <select class="form-select" @bind="editStatus">
+                        <option value="Saved">Saved</option>
+                        <option value="Applied">Applied</option>
+                        <option value="HRInterview">HR Interview</option>
+                        <option value="TechnicalInterview">Technical Interview</option>
+                        <option value="FinalInterview">Final Interview</option>
+                        <option value="Offer">Offer 🎉</option>
+                        <option value="Rejected">Rejected</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Applied date</label>
+                    <input type="date" class="form-input"
+                           value="@(editAppliedAt?.ToString("yyyy-MM-dd") ?? "")"
+                           @onchange="OnAppliedAtChanged" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Job posting URL</label>
+                    <input type="url" class="form-input"
+                           placeholder="https://..."
+                           @bind="editJobUrl" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Notes</label>
+                    <textarea class="form-textarea note-textarea"
+                              placeholder="Interview notes, salary, recruiter name, questions asked..."
+                              @bind="editNotes"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-cancel" @onclick="() => showEditModal = false">
+                        Cancel
+                    </button>
+                    <button class="btn-primary" @onclick="SaveEdit" disabled="@isSaving">
+                        @(isSaving ? "Saving..." : "Save changes")
+                    </button>
+                </div>
+            }
+            else
+            {
+                <div class="interview-tab-content">
+                    @if (isLoadingQuestions)
+                    {
+                        <div style="color:#555560;font-size:12px;padding:12px 0">Loading...</div>
+                    }
+                    else if (appQuestions.Count == 0)
+                    {
+                        <div style="text-align:center;padding:20px 0">
+                            <div style="color:#555560;font-size:12px;margin-bottom:12px">
+                                No questions yet. Generate questions based on this job.
+                            </div>
+                            <button class="btn-primary" @onclick="GenerateQuestions"
+                                    disabled="@isGenerating">
+                                @(isGenerating ? "Generating..." : "✦ Generate questions")
+                            </button>
+                            @if (!string.IsNullOrEmpty(errorMessage))
+                            {
+                                <div class="error" style="margin-top:12px;font-size:12px">@errorMessage</div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                            <div style="font-size:11px;color:#555560">
+                                @appQuestions.Count questions generated
+                            </div>
+                            <button class="ca-btn" @onclick="GenerateQuestions" disabled="@isGenerating">
+                                @(isGenerating ? "Regenerating..." : "↺ Regenerate")
+                            </button>
+                        </div>
+                        <div style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto">
+                            @foreach (var q in appQuestions)
+                            {
+                                <div class="question-card-mini">
+                                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                                        <span class="question-type-badge qtype-@q.QuestionType.ToLower()">
+                                            @GetTypeLabel(q.QuestionType)
+                                        </span>
+                                        <select class="status-select status-@q.Status.ToLower()"
+                                                style="margin-left:auto"
+                                                value="@q.Status"
+                                                @onchange="e => UpdateQuestionStatus(q.Id, e.Value?.ToString() ?? q.Status)">
+                                            <option value="NotPracticed">Not practiced</option>
+                                            <option value="NeedsWork">Needs work</option>
+                                            <option value="Practiced">Practiced ✓</option>
+                                        </select>
+                                    </div>
+                                    <div style="font-size:12px;color:#e8e8ea;line-height:1.5">
+                                        @q.Question
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(q.Hint))
+                                    {
+                                        <div style="font-size:11px;color:#555560;margin-top:4px">
+                                            💡 @q.Hint
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    List<ApplicationSummary> applications = new();
+    DashboardStats? stats;
+    string activeFilter = "All";
+    string searchQuery = "";
+    bool isLoading = true;
+    List<(string Role, string TextContent, DataTable? Table)> chatMessages = new();
+    string chatInput = "";
+    bool isChatLoading = false;
+    bool showAddDialog = false;
+    string editJobDescription = "";
+    string? errorMessage = null;
+
+    class ApplicationFormModel
+    {
+        public string CompanyName { get; set; } = "";
+        public string Position { get; set; } = "";
+        public string Source { get; set; } = "LinkedIn";
+        public string Status { get; set; } = "Applied";
+    }
+    ApplicationFormModel formModel = new();
+    DateTime addDateOnly = DateTime.Today;
+
+    bool showEditModal = false;
+    ApplicationDetail? editingApp = null;
+    string editCompanyName = "";
+    string editPosition = "";
+    string editNotes = "";
+    string editStatus = "";
+    string editJobUrl = "";
+    DateTimeOffset? editAppliedAt = null;
+    bool isSaving = false;
+
+    string activeModalTab = "details";
+    List<InterviewQuestion> appQuestions = new();
+    bool isGenerating = false;
+    bool isLoadingQuestions = false;
+
+    IEnumerable<ApplicationSummary> filteredApps => activeFilter switch
+    {
+        "Active" => applications.Where(a => a.Status != "Rejected" && a.Status != "Offer" && a.Status != "Saved"),
+        "Interview" => applications.Where(a => a.Status.Contains("Interview")),
+        "Offer" => applications.Where(a => a.Status == "Offer"),
+        "Rejected" => applications.Where(a => a.Status == "Rejected"),
+        _ => applications
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    async Task LoadData()
+    {
+        isLoading = true;
+        applications = await AppService.GetAllAsync(
+            activeFilter == "All" ? null : activeFilter,
+            string.IsNullOrWhiteSpace(searchQuery) ? null : searchQuery);
+        stats = await AppService.GetStatsAsync();
+        isLoading = false;
+    }
+
+    void SetFilter(string filter)
+    {
+        activeFilter = filter;
+        _ = LoadData();
+    }
+
+    async Task SaveApplication()
+    {
+        var req = new CreateApplicationRequest(
+            formModel.CompanyName,
+            formModel.Position,
+            null,
+            formModel.Source,
+            null,
+            formModel.Status,
+            null,
+            null,
+            new DateTimeOffset(addDateOnly.ToUniversalTime(), TimeSpan.Zero),
+            0
+        );
+        await AppService.CreateAsync(req);
+        showAddDialog = false;
+        formModel = new();
+        addDateOnly = DateTime.Today;
+        await LoadData();
+    }
+
+    async Task OpenEditModal(Guid id)
+    {
+        editingApp = await AppService.GetByIdAsync(id);
+        if (editingApp is not null)
+        {
+            editCompanyName = editingApp.CompanyName;
+            editPosition = editingApp.Position;
+            editNotes = editingApp.Notes ?? "";
+            editStatus = editingApp.Status;
+            editJobUrl = editingApp.JobUrl ?? "";
+            editAppliedAt = editingApp.AppliedAt;
+            activeModalTab = "details";
+            await LoadAppQuestions(id);
+            showEditModal = true;
+            editJobDescription = editingApp.JobDescription ?? "";
+        }
+    }
+
+    void OnAppliedAtChanged(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString();
+        editAppliedAt = string.IsNullOrEmpty(val) ? null : DateTimeOffset.Parse(val);
+    }
+
+    async Task SaveEdit()
+    {
+        if (editingApp is null) return;
+        isSaving = true;
+
+        await AppService.UpdateAsync(editingApp.Id, new UpdateApplicationRequest(
+            string.IsNullOrWhiteSpace(editCompanyName) ? null : editCompanyName,
+            string.IsNullOrWhiteSpace(editPosition) ? null : editPosition,
+            string.IsNullOrWhiteSpace(editJobUrl) ? null : editJobUrl,
+            string.IsNullOrWhiteSpace(editJobDescription) ? null : editJobDescription,
+            null, null,
+            editStatus,
+            null,
+            string.IsNullOrWhiteSpace(editNotes) ? null : editNotes,
+            editAppliedAt,
+            null
+        ));
+
+        showEditModal = false;
+        isSaving = false;
+        await LoadData();
+    }
+
+    async Task MoveUp(Guid id)
+    {
+        await AppService.MoveUpAsync(id);
+        await LoadData();
+    }
+
+    async Task MoveDown(Guid id)
+    {
+        await AppService.MoveDownAsync(id);
+        await LoadData();
+    }
+
+    async Task LoadAppQuestions(Guid applicationId)
+    {
+        isLoadingQuestions = true;
+        appQuestions = await InterviewService.GetByApplicationAsync(applicationId);
+        isLoadingQuestions = false;
+    }
+
+    async Task GenerateQuestions()
+    {
+        if (editingApp == null) return;
+        var jobDesc = editJobDescription;
+        if (string.IsNullOrWhiteSpace(jobDesc))
+        {
+            errorMessage = "Please fill in the Job Description in the Details tab first.";
+            activeModalTab = "details";
+            StateHasChanged();
+            return;
+        }
+        isGenerating = true;
+        StateHasChanged();
+        try
+        {
+            var defaultResumes = await ResumeService.GetAllAsync();
+            var resume = defaultResumes.FirstOrDefault(r => r.IsDefault)
+                ?? defaultResumes.FirstOrDefault();
+            var resumeDetail = resume != null
+                ? await ResumeService.GetByIdAsync(resume.Id)
+                : null;
+            appQuestions = await InterviewService.GenerateAsync(new GenerateQuestionsRequest(
+                editingApp.Id,
+                jobDesc,
+                resumeDetail?.Content ?? ""
+            ));
+            if (appQuestions.Count == 0)
+            {
+                errorMessage = "Failed to generate questions. Make sure Ollama is running.";
+            }
+            else
+            {
+                errorMessage = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isGenerating = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task UpdateQuestionStatus(Guid questionId, string status)
+    {
+        await InterviewService.UpdateAsync(questionId,
+            new UpdateQuestionRequest(null, status));
+        var q = appQuestions.FirstOrDefault(x => x.Id == questionId);
+        if (q != null)
+        {
+            var idx = appQuestions.IndexOf(q);
+            appQuestions[idx] = q with { Status = status };
+        }
+    }
+
+    string GetTypeLabel(string type) => type switch
+    {
+        "Technical"  => "Technical",
+        "Behavioral" => "Behavioral",
+        "AskThem"    => "Ask them",
+        _            => type
+    };
+
+    async Task SendChatMessage()
+    {
+        if (string.IsNullOrWhiteSpace(chatInput) || isChatLoading) return;
+        var question = chatInput.Trim();
+        chatInput = "";
+        chatMessages.Add(("user", question, null));
+        isChatLoading = true;
+        StateHasChanged();
+
+        var history = chatMessages.SkipLast(1)
+            .Select(m => new DataChatMessage(m.Role, m.TextContent)).ToList();
+
+        try
+        {
+            var response = await AppService.ChatAsync(new DataChatRequest(question, history));
+            if (response != null) chatMessages.Add(("assistant", response.TextAnswer, response.Table));
+        }
+        catch { chatMessages.Add(("assistant", "Error connecting to AI.", null)); }
+        isChatLoading = false;
+    }
+
+    async Task QuickAsk(string q)
+    {
+        chatInput = q;
+        await SendChatMessage();
+    }
+
+    async Task HandleChatKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey) await SendChatMessage();
+    }
+
+    string GetStatusClass(string status) => status switch
+    {
+        "Saved" => "badge-saved", "Applied" => "badge-applied", "HRInterview" => "badge-hr",
+        "TechnicalInterview" => "badge-tech", "FinalInterview" => "badge-final",
+        "Offer" => "badge-offer", "Rejected" => "badge-rejected", _ => "badge-saved"
+    };
+
+    string GetStatusLabel(string status) => status switch
+    {
+        "HRInterview" => "HR Interview", "TechnicalInterview" => "Technical",
+        "FinalInterview" => "Final", _ => status
+    };
+}

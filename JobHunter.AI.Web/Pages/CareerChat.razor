@@ -1,0 +1,186 @@
+﻿@page "/career-chat"
+@inject HttpClient Http
+@using JobHunter.AI.Web.Models
+
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Career Chat</h1>
+        <div style="font-size:12px;color:#555560;margin-top:2px">
+            AI advisor with full access to your career data
+        </div>
+    </div>
+    @if (chatMessages.Count > 0)
+    {
+        <button class="btn-cancel" @onclick="ClearChat">Clear chat</button>
+    }
+</div>
+
+<div class="career-chat-container">
+
+    <!-- Suggestion chips — فقط وقتی چت خالیه -->
+    @if (chatMessages.Count == 0)
+    {
+        <div class="career-chat-empty">
+            <div class="career-chat-empty-icon">✦</div>
+            <div class="career-chat-empty-title">Your AI Career Advisor</div>
+            <div class="career-chat-empty-sub">
+                Ask anything about your career, skills, or job search strategy
+            </div>
+            <div class="career-suggestions-grid">
+                <button class="career-suggestion-card"
+                        @onclick='() => QuickAsk("What are my strongest skills based on my resume?")'>
+                    <div class="cs-card-icon">💪</div>
+                    <div class="cs-card-text">What are my strongest skills?</div>
+                </button>
+                <button class="career-suggestion-card"
+                        @onclick='() => QuickAsk("What is my biggest weakness based on my job applications and resume?")'>
+                    <div class="cs-card-icon">🎯</div>
+                    <div class="cs-card-text">What is my biggest weakness?</div>
+                </button>
+                <button class="career-suggestion-card"
+                        @onclick='() => QuickAsk("Which types of companies seem to respond most to my applications?")'>
+                    <div class="cs-card-icon">📊</div>
+                    <div class="cs-card-text">Which companies respond most?</div>
+                </button>
+                <button class="career-suggestion-card"
+                        @onclick='() => QuickAsk("What should I focus on to get more interview callbacks?")'>
+                    <div class="cs-card-icon">🚀</div>
+                    <div class="cs-card-text">How to get more callbacks?</div>
+                </button>
+                <button class="career-suggestion-card"
+                        @onclick='() => QuickAsk("Am I ready for a senior software engineer role?")'>
+                    <div class="cs-card-icon">⭐</div>
+                    <div class="cs-card-text">Am I ready for a senior role?</div>
+                </button>
+                <button class="career-suggestion-card"
+                        @onclick='() => QuickAsk("What skills should I learn next to increase my market value?")'>
+                    <div class="cs-card-icon">📚</div>
+                    <div class="cs-card-text">What should I learn next?</div>
+                </button>
+            </div>
+        </div>
+    }
+
+    <!-- پیام‌های چت -->
+    <div class="career-chat-messages" id="career-chat-messages">
+        @foreach (var msg in chatMessages)
+        {
+            @if (msg.Role == "user")
+            {
+                <div class="career-msg-row career-msg-row-user">
+                    <div class="career-msg-user">@msg.Content</div>
+                </div>
+            }
+            else
+            {
+                <div class="career-msg-row career-msg-row-ai">
+                    <div class="career-msg-ai-avatar">✦</div>
+                    <div class="career-msg-ai"  dir="auto">@msg.Content</div>
+                </div>
+            }
+        }
+
+        @if (isLoading)
+        {
+            <div class="career-msg-row career-msg-row-ai">
+                <div class="career-msg-ai-avatar">✦</div>
+                <div class="career-msg-ai career-msg-loading">
+                    <span class="dot">.</span>
+                    <span class="dot">.</span>
+                    <span class="dot">.</span>
+                </div>
+            </div>
+        }
+    </div>
+
+    <!-- Input -->
+    <div class="career-chat-input-area">
+        <div class="career-chat-input-row">
+            <textarea class="career-chat-input"
+                      placeholder="Ask about your career, skills, job search strategy..."
+                      @bind="userInput"
+                      @bind:event="oninput"
+                      @onkeydown="HandleKeyDown"
+                      rows="1"
+                      dir="auto"></textarea>
+            <button class="career-send-btn"
+                    @onclick="SendMessage"
+                    disabled="@(isLoading || string.IsNullOrWhiteSpace(userInput))">
+                ↑
+            </button>
+        </div>
+        <div class="career-chat-hint">
+            Press Enter to send · Shift+Enter for new line
+        </div>
+    </div>
+
+</div>
+
+@code {
+    record ChatMsg(string Role, string Content);
+
+    List<ChatMsg> chatMessages = new();
+    string userInput = "";
+    bool isLoading = false;
+
+    async Task SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(userInput) || isLoading) return;
+
+        var message = userInput.Trim();
+        userInput = "";
+        chatMessages.Add(new ChatMsg("user", message));
+        isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var history = chatMessages
+                .SkipLast(1)
+                .Select(m => new CareerChatMessage(m.Role, m.Content))
+                .ToList();
+
+            var response = await Http.PostAsJsonAsync("/api/career-chat",
+                new CareerChatRequest(message, history));
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content
+                    .ReadFromJsonAsync<CareerChatResponse>();
+                chatMessages.Add(new ChatMsg("assistant", result?.Reply ?? "No response."));
+            }
+            else
+            {
+                chatMessages.Add(new ChatMsg("assistant",
+                    "Something went wrong. Please try again."));
+            }
+        }
+        catch
+        {
+            chatMessages.Add(new ChatMsg("assistant",
+                "Could not connect to the server."));
+        }
+
+        isLoading = false;
+    }
+
+    async Task QuickAsk(string question)
+    {
+        userInput = question;
+        await SendMessage();
+    }
+
+    void ClearChat()
+    {
+        chatMessages.Clear();
+        userInput = "";
+    }
+
+    async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await SendMessage();
+        }
+    }
+}

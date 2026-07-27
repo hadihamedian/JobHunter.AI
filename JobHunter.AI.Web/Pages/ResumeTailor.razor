@@ -1,0 +1,256 @@
+﻿@page "/resume-tailor"
+@inject HttpClient Http
+@inject ResumeService ResumeService
+@inject IJSRuntime JS
+@using JobHunter.AI.Web.Models
+@using JobHunter.AI.Web.Services
+@using Markdig
+
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Resume Tailor</h1>
+        <div style="font-size:12px;color:#555560;margin-top:2px">
+            AI rewrites your resume to match the job description
+        </div>
+    </div>
+</div>
+
+<!-- Step 1 & 2 -->
+<div class="tailor-grid">
+    <div class="panel">
+        <div class="panel-title">
+            <span class="step-num">①</span> Select your resume
+        </div>
+        @if (resumes.Count == 0)
+        {
+            <div style="font-size:12px;color:#555560">
+                No resumes yet.
+                <a href="/resumes" style="color:#6366f1">Add one →</a>
+            </div>
+        }
+        else
+        {
+            <div class="resume-select-list">
+                @foreach (var r in resumes)
+                {
+                    <div class="resume-option @(selectedResumeId == r.Id ? "resume-option-selected" : "")"
+                         @onclick="() => selectedResumeId = r.Id">
+                        <div class="resume-option-dot @(selectedResumeId == r.Id ? "resume-option-dot-active" : "")"></div>
+                        <div>
+                            <div class="resume-option-name">
+                                @r.Name
+                                @if (r.IsDefault)
+                                {
+                                    <span class="default-badge" style="margin-left:6px">Default</span>
+                                }
+                            </div>
+                            <div class="resume-option-meta">@r.WordCount words</div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">
+            <span class="step-num">②</span> Job description
+        </div>
+        <textarea class="analyze-textarea"
+                  placeholder="Paste the job posting here..."
+                  @bind="jobDescription"
+                  rows="6"></textarea>
+    </div>
+</div>
+
+<!-- Step 3 — Style -->
+<div class="panel" style="margin-bottom:14px">
+    <div class="panel-title">
+        <span class="step-num">③</span> Tailoring style
+    </div>
+    <div class="style-options">
+        <div class="style-option @(selectedStyle == "conservative" ? "style-option-selected" : "")"
+             @onclick='() => selectedStyle = "conservative"'>
+            <div class="style-option-title">Conservative</div>
+            <div class="style-option-desc">
+                Small rewrites, keep your voice. Only add clearly missing keywords.
+            </div>
+        </div>
+        <div class="style-option @(selectedStyle == "aggressive" ? "style-option-selected" : "")"
+             @onclick='() => selectedStyle = "aggressive"'>
+            <div class="style-option-title">Aggressive</div>
+            <div class="style-option-desc">
+                Maximize keyword match. Rewrite sections for highest ATS score.
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tailor Button -->
+<button class="btn-primary" style="width:100%;margin-bottom:16px;padding:12px"
+        @onclick="TailorResume"
+        disabled="@(isTailoring || selectedResumeId == Guid.Empty || string.IsNullOrWhiteSpace(jobDescription))">
+    @if (isTailoring)
+    {
+        <span>Tailoring your resume...</span>
+    }
+    else
+    {
+        <span>✦ Tailor my resume</span>
+    }
+</button>
+
+@if (isTailoring)
+{
+    <div style="font-size:11px;color:#555560;text-align:center;margin-top:-10px;margin-bottom:16px">
+        This may take 1-2 minutes — the model is running locally on your system, do not close the page.
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="error">@errorMessage</div>
+}
+
+<!-- Result -->
+@if (result != null)
+{
+    <div class="panel" style="margin-bottom:14px">
+        <div class="result-header-row">
+            <div style="display:flex;align-items:center;gap:8px">
+                <span style="color:#6366f1">✦</span>
+                <div style="font-size:13px;font-weight:500;color:#e8e8ea">Tailored resume</div>
+                @if (result.EstimatedAtsImprovement > 0)
+                {
+                    <span style="font-size:11px;padding:2px 8px;border-radius:20px;background:#0f2a1a;color:#4ade80;border:0.5px solid #1a4a2a">
+                        +@result.EstimatedAtsImprovement% ATS est.
+                    </span>
+                }
+            </div>
+            <div style="display:flex;gap:6px">
+                <button class="ca-btn" @onclick="CopyToClipboard">Copy text</button>
+                <button class="ca-btn ca-primary" @onclick="SaveAsNewResume" disabled="@isSaving">
+                    @(isSaving ? "Saving..." : "Save as new resume")
+                </button>
+                <button class="ca-btn" @onclick="OpenPrintView">Download PDF</button>
+            </div>
+        </div>
+
+        <!-- Tailored content -->
+        <div class="tailored-content markdown-body">@((MarkupString)RenderMarkdown(result.TailoredContent))</div>
+
+        <!-- Changes summary -->
+        <div class="changes-grid">
+            @if (result.KeywordsAdded.Count > 0)
+            {
+                <div class="change-card">
+                    <div class="change-card-title">Keywords added</div>
+                    @foreach (var kw in result.KeywordsAdded)
+                    {
+                        <div class="change-item">
+                            <span style="color:#4ade80">+</span> @kw
+                        </div>
+                    }
+                </div>
+            }
+            @if (result.SectionsRewritten.Count > 0)
+            {
+                <div class="change-card">
+                    <div class="change-card-title">Sections rewritten</div>
+                    @foreach (var s in result.SectionsRewritten)
+                    {
+                        <div class="change-item">
+                            <span style="color:#a5b4fc">·</span> @s
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    List<ResumeSummary> resumes = new();
+    Guid selectedResumeId = Guid.Empty;
+    string jobDescription = "";
+    string selectedStyle = "conservative";
+    TailorResult? result = null;
+    bool isTailoring = false;
+    bool isSaving = false;
+    string? errorMessage = null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        resumes = await ResumeService.GetAllAsync();
+        var def = resumes.FirstOrDefault(r => r.IsDefault) ?? resumes.FirstOrDefault();
+        if (def != null) selectedResumeId = def.Id;
+    }
+
+    async Task TailorResume()
+    {
+        if (selectedResumeId == Guid.Empty || string.IsNullOrWhiteSpace(jobDescription))
+            return;
+
+        isTailoring = true;
+        errorMessage = null;
+        result = null;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/tailor", new TailorRequest(
+                selectedResumeId,
+                jobDescription,
+                selectedStyle
+            ));
+
+            if (response.IsSuccessStatusCode)
+                result = await response.Content.ReadFromJsonAsync<TailorResult>();
+            else
+                errorMessage = "Tailoring failed. Please try again.";
+        }
+        catch
+        {
+            errorMessage = "Could not connect to the server.";
+        }
+
+        isTailoring = false;
+    }
+
+    async Task CopyToClipboard()
+    {
+        if (result is null) return;
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", result.TailoredContent);
+    }
+
+    async Task SaveAsNewResume()
+    {
+        if (result is null) return;
+        isSaving = true;
+
+        var selectedResume = resumes.FirstOrDefault(r => r.Id == selectedResumeId);
+        var newName = $"{selectedResume?.Name ?? "Resume"} — Tailored";
+
+        await ResumeService.CreateAsync(new CreateResumeRequest(
+            newName,
+            result.TailoredContent,
+            false
+        ));
+
+        isSaving = false;
+        resumes = await ResumeService.GetAllAsync();
+    }
+
+    static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .DisableHtml()   // امنیت: خروجی مدل رو نمی‌گذاره HTML خام تزریق کنه
+        .Build();
+
+    string RenderMarkdown(string markdown) => Markdig.Markdown.ToHtml(markdown ?? "", Pipeline);
+
+    async Task OpenPrintView()
+    {
+        if (result is null) return;
+        var html = RenderMarkdown(result.TailoredContent);
+        await JS.InvokeVoidAsync("openPrintView", html);
+    }
+}

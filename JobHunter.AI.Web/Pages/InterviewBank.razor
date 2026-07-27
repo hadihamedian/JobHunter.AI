@@ -1,0 +1,340 @@
+﻿@page "/interview-bank"
+@using JobHunter.AI.Web.Models
+@using JobHunter.AI.Web.Services
+@inject InterviewService InterviewService
+
+<div class="page-header">
+    <h1 class="page-title">Interview Bank</h1>
+    <div style="font-size:12px;color:#555560">@questions.Count questions across all applications</div>
+</div>
+
+@if (isLoading)
+{
+    <div class="loading">Loading questions...</div>
+}
+else
+{
+    <!-- Search Box -->
+    <div class="search-bar" style="margin-bottom: 16px;">
+        <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <path d="m21 21-4.35-4.35"></path>
+        </svg>
+        <input class="search-input"
+               placeholder="Search questions, hints, notes..."
+               @bind="searchQuery"
+               @bind:event="oninput"/>
+        @if (!string.IsNullOrEmpty(searchQuery))
+        {
+            <button class="search-clear" @onclick="() => searchQuery = string.Empty">✕</button>
+        }
+    </div>
+
+    <!-- Filter chips -->
+    <div class="filter-row" style="margin-bottom:16px">
+        <button class="fc @(typeFilter == "All" ? "fc-active" : "")"
+                @onclick='() => typeFilter = "All"'>All
+        </button>
+        <button class="fc @(typeFilter == "Technical" ? "fc-active" : "")"
+                @onclick='() => typeFilter = "Technical"'>Technical
+        </button>
+        <button class="fc @(typeFilter == "Behavioral" ? "fc-active" : "")"
+                @onclick='() => typeFilter = "Behavioral"'>Behavioral
+        </button>
+        <button class="fc @(typeFilter == "AskThem" ? "fc-active" : "")"
+                @onclick='() => typeFilter = "AskThem"'>Ask them
+        </button>
+        <div style="margin-left:auto;display:flex;gap:6px">
+            <button class="fc @(statusFilter == "All" ? "fc-active" : "")"
+                    @onclick='() => statusFilter = "All"'>All status
+            </button>
+            <button class="fc @(statusFilter == "NotPracticed" ? "fc-active" : "")"
+                    @onclick='() => statusFilter = "NotPracticed"'>Not practiced
+            </button>
+            <button class="fc @(statusFilter == "NeedsWork" ? "fc-active" : "")"
+                    @onclick='() => statusFilter = "NeedsWork"'>Needs work
+            </button>
+            <button class="fc @(statusFilter == "Practiced" ? "fc-active" : "")"
+                    @onclick='() => statusFilter = "Practiced"'>Practiced
+            </button>
+        </div>
+    </div>
+
+    <!-- Questions list -->
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+        @if (FilteredQuestions.Count == 0)
+        {
+            <div class="loading">
+                @if (!string.IsNullOrEmpty(searchQuery))
+                {
+                    <span>No questions match "@searchQuery"</span>
+                }
+                else
+                {
+                    <span>No questions match your filters.</span>
+                }
+            </div>
+        }
+        else
+        {
+            @foreach (var q in FilteredQuestions)
+            {
+                <div class="question-card">
+                    <div class="question-card-header">
+                        <span class="question-type-badge qtype-@q.QuestionType.ToLower()">
+                            @GetTypeLabel(q.QuestionType)
+                        </span>
+                        <select class="status-select status-@q.Status.ToLower()"
+                                value="@q.Status"
+                                @onchange="e => UpdateStatus(q.Id, e.Value?.ToString() ?? q.Status)">
+                            <option value="NotPracticed">Not practiced</option>
+                            <option value="NeedsWork">Needs work</option>
+                            <option value="Practiced">Practiced ✓</option>
+                        </select>
+                    </div>
+                    <div class="question-text">@q.Question</div>
+                    @if (!string.IsNullOrEmpty(q.Hint))
+                    {
+                        <div class="question-hint">
+                            <span style="color:#6366f1">💡</span> @q.Hint
+                        </div>
+                    }
+                    <div class="question-note-row">
+                        <textarea class="question-note-input"
+                                  placeholder="Add your personal note..."
+                                  value="@(q.PersonalNote ?? string.Empty)"
+                                  @onchange="e => UpdateNote(q.Id, e.Value?.ToString() ?? string.Empty)">
+                        </textarea>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+
+    <!-- Pagination -->
+    @if (TotalPages > 1)
+    {
+        <div class="pagination-container">
+            <button class="pagination-btn"
+                    @onclick="PreviousPage"
+                    disabled="@(CurrentPage == 1)">
+                ← Previous
+            </button>
+
+            <div class="pagination-info">
+                <span>Page </span>
+                <select class="page-select" @bind="CurrentPage">
+                    @for (int i = 1; i <= TotalPages; i++)
+                    {
+                        <option value="@i">@i</option>
+                    }
+                </select>
+                <span> of @TotalPages</span>
+                <span style="color:#555560;margin-left:8px">
+                    (@FilteredQuestions.Count questions)
+                </span>
+            </div>
+
+            <button class="pagination-btn"
+                    @onclick="NextPage"
+                    disabled="@(CurrentPage == TotalPages)">
+                Next →
+            </button>
+        </div>
+    }
+
+    <!-- Interview Bank Chat -->
+    <div class="chat-section">
+        <div class="chat-header">
+            <span style="color:#6366f1;font-size:14px">💬</span>
+            <div style="font-size:12px;font-weight:500;color:#e8e8ea">
+                Ask about your questions
+            </div>
+            <span class="chat-badge">AI powered</span>
+        </div>
+        @if (chatMessages.Count == 0)
+        {
+            <div class="chat-suggestions">
+                <button class="chat-suggestion-chip"
+                        @onclick='() => QuickAsk("Show me all EF Core questions")'>
+                    EF Core questions
+                </button>
+                <button class="chat-suggestion-chip"
+                        @onclick='() => QuickAsk("Which questions do I still need to practice?")'>
+                    Not practiced yet
+                </button>
+                <button class="chat-suggestion-chip"
+                        @onclick='() => QuickAsk("What topics come up most often?")'>
+                    Most common topics
+                </button>
+            </div>
+        }
+        <div class="chat-messages">
+            @foreach (var msg in chatMessages)
+            {
+                @if (msg.Role == "user")
+                {
+                    <div class="chat-msg-user">@msg.TextContent</div>
+                }
+                else
+                {
+                    <div class="chat-msg-ai">
+                        <div class="chat-msg-ai-text">@msg.TextContent</div>
+                        @if (msg.FilteredQuestions != null && msg.FilteredQuestions.Count > 0)
+                        {
+                            <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
+                                @foreach (var q in msg.FilteredQuestions)
+                                {
+                                    <div class="chat-mini-result">
+                                        <span class="question-type-badge qtype-@q.QuestionType.ToLower()"
+                                              style="font-size:9px;padding:1px 6px">
+                                            @GetTypeLabel(q.QuestionType)
+                                        </span>
+                                        <span style="font-size:12px;color:#c8c8cc;margin-left:6px">
+                                            @q.Question
+                                        </span>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            }
+            @if (isChatLoading)
+            {
+                <div class="chat-msg-ai">
+                    <div class="chat-msg-ai-text chat-loading-dots">...</div>
+                </div>
+            }
+        </div>
+        <div class="chat-input-row">
+            <input class="chat-input"
+                   placeholder="Ask about your interview questions..."
+                   @bind="chatInput"
+                   @bind:event="oninput"
+                   @onkeydown="HandleKeyDown"/>
+            <button class="chat-send-btn"
+                    @onclick="SendChat"
+                    disabled="@(isChatLoading || string.IsNullOrWhiteSpace(chatInput))">
+                Send
+            </button>
+        </div>
+    </div>
+}
+
+@code {
+    List<InterviewQuestion> questions = new();
+    string typeFilter = "All";
+    string statusFilter = "All";
+    string searchQuery = "";
+    bool isLoading = true;
+
+    // Pagination
+    const int PageSize = 10;
+    int CurrentPage = 1;
+    int TotalPages => Math.Max(1, (int)Math.Ceiling(FilteredQuestions.Count / (double)PageSize));
+
+    // Chat
+    List<ChatMsg> chatMessages = new();
+    string chatInput = "";
+    bool isChatLoading = false;
+
+    record ChatMsg(
+        string Role,
+        string TextContent,
+        List<InterviewQuestion>? FilteredQuestions = null);
+
+    List<InterviewQuestion> FilteredQuestions => questions
+        .Where(q => string.IsNullOrEmpty(searchQuery) ||
+                    q.Question.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+                    (q.Hint != null && q.Hint.Contains(searchQuery, StringComparison.OrdinalIgnoreCase)) ||
+                    (q.PersonalNote != null && q.PersonalNote.Contains(searchQuery, StringComparison.OrdinalIgnoreCase)))
+        .Where(q => typeFilter == "All" || q.QuestionType == typeFilter)
+        .Where(q => statusFilter == "All" || q.Status == statusFilter)
+        .ToList();
+
+    List<InterviewQuestion> PaginatedQuestions => FilteredQuestions
+        .Skip((CurrentPage - 1) * PageSize)
+        .Take(PageSize)
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        questions = await InterviewService.GetAllAsync();
+        isLoading = false;
+    }
+
+    string GetTypeLabel(string type) => type switch
+    {
+        "Technical" => "Technical",
+        "Behavioral" => "Behavioral",
+        "AskThem" => "Ask them",
+        _ => type
+    };
+
+    void PreviousPage()
+    {
+        if (CurrentPage > 1) CurrentPage--;
+    }
+
+    void NextPage()
+    {
+        if (CurrentPage < TotalPages) CurrentPage++;
+    }
+
+    async Task UpdateStatus(Guid id, string status)
+    {
+        await InterviewService.UpdateAsync(id, new UpdateQuestionRequest(null, status));
+        var q = questions.FirstOrDefault(x => x.Id == id);
+        if (q != null)
+        {
+            var idx = questions.IndexOf(q);
+            questions[idx] = q with { Status = status };
+        }
+    }
+
+    async Task UpdateNote(Guid id, string note)
+    {
+        await InterviewService.UpdateAsync(id,
+            new UpdateQuestionRequest(note, null));
+    }
+
+    async Task SendChat()
+    {
+        if (string.IsNullOrWhiteSpace(chatInput) || isChatLoading) return;
+        var question = chatInput.Trim();
+        chatInput = "";
+        chatMessages.Add(new ChatMsg("user", question));
+        isChatLoading = true;
+        StateHasChanged();
+
+        var history = chatMessages.SkipLast(1)
+            .Select(m => new InterviewBankChatMessage(m.Role, m.TextContent))
+            .ToList();
+
+        var response = await InterviewService.ChatAsync(
+            new InterviewBankChatRequest(question, history));
+
+        if (response != null)
+            chatMessages.Add(new ChatMsg(
+                "assistant",
+                response.TextAnswer,
+                response.FilteredQuestions));
+
+        isChatLoading = false;
+    }
+
+    async Task QuickAsk(string q)
+    {
+        chatInput = q;
+        await SendChat();
+    }
+
+    async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await SendChat();
+    }
+
+}
