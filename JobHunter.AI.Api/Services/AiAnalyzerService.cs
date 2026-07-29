@@ -13,6 +13,15 @@ public class AiAnalyzerService(HttpClient httpClient, IConfiguration configurati
         var requirements = await ExtractRequirementsAsync(jobDesc);
         if (requirements is null || requirements.Count == 0) return null;
 
+        // De-duplicate deterministically in C# — the model is asked not to repeat
+        // itself, but local models don't always follow that reliably, especially
+        // when the job description itself repeats a term (e.g. the same tech
+        // stack item appearing twice in different sentences).
+        requirements = requirements
+            .GroupBy(r => r.Text.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+
         // Stage 2: "skill" requirements are checked with plain, deterministic text
         // matching in C# — not by asking a small local model, which tends to miss
         // obvious literal matches once the list/resume gets long. Only "experience"
@@ -48,7 +57,7 @@ public class AiAnalyzerService(HttpClient httpClient, IConfiguration configurati
     private async Task<List<RequirementItem>?> ExtractRequirementsAsync(string jobDesc)
     {
         var url = configuration["Ollama:Url"] ?? "http://localhost:11434/api/generate";
-        var model = configuration["Ollama:Model"] ?? "gemma4:12b";
+        var model = configuration["Ollama:Model"] ?? "llama3.2";
 
         var prompt = $@"Extract job requirements from the text below that can be OBJECTIVELY verified from a resume. For each one, classify it as exactly one of:
 - ""skill"": a specific technology, tool, framework, language, or technical skill (e.g. ""C#"", ""SQL Server"", ""ASP.NET"", ""Design Patterns"").
@@ -57,6 +66,8 @@ public class AiAnalyzerService(HttpClient httpClient, IConfiguration configurati
 Do NOT include vague soft-skill, personality, or attitude requirements that cannot be reliably checked from resume text (e.g. ""team spirit"", ""problem-solving ability"", ""motivation"", ""creativity"", ""responsibility""). Exclude these entirely — do not output them as either type.
 
 IMPORTANT — keep every requirement ATOMIC: one single technology/skill per item. If a sentence lists several technologies together (e.g. ""C# and .NET"", ""SQL Server and Entity Framework"", or the same thing joined by ""و"" in Persian), split it into SEPARATE items — one per technology — instead of returning the whole sentence as one item. Each item's text should ideally be just the technology name itself (e.g. ""C#"", "".NET""), not a full sentence around it.
+
+IMPORTANT — completeness: if the job description contains a comma-separated list of technologies (e.g. a ""Tech stack: A, B, C, D"" line), you MUST extract EVERY distinct item from that list — do not skip or stop early partway through a list. If the same technology is mentioned more than once anywhere in the text (e.g. the job title repeated at the end of a list), only include it ONCE in your output — never output the same requirement twice.
 
 The job description may be written in Persian, English, or a mix — read and fully understand it before extracting, regardless of language. Write each requirement's ""text"" as the technology/skill name itself — prefer the common English name for well-known technologies (e.g. "".NET"", ""C#"") even if the surrounding job description sentence was in Persian, since that name is what will be searched for in the resume.
 
@@ -77,7 +88,7 @@ Return ONLY this JSON, no explanation, no markdown fences:
             prompt,
             stream = false,
             format = "json",
-            options = new { temperature = 0 }
+            options = new { temperature = 0, num_predict = 800 }
         };
 
         var response = await httpClient.PostAsJsonAsync(url, payload);
