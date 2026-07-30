@@ -25,11 +25,11 @@ Everything runs **locally by default** — no data ever has to leave your machin
 📸 Screenshots
 | Smart Analyze | Career Chat |
 | :---: | :---: |
-| ![Smart Analyze](.screenshots/smart-analyze.png) | ![Career Chat](.screenshots/career-chat.png) |
+| ![Smart Analyze](.screenshots/Smart-Analyze.png) | ![Career Chat](.screenshots/Career-Chat.png) |
 
 | Applications Dashboard | Resume Tailor |
 | :---: | :---: |
-| ![Dashboard](.screenshots/dashboard.png) | ![Resume Tailor](.screenshots/resume-tailor.png) |
+| ![Dashboard](.screenshots/Dashboard.png) | ![Resume Tailor](.screenshots/Resume-Tailor.png) |
 
 ---
 
