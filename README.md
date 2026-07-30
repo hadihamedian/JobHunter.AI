@@ -22,6 +22,17 @@ Everything runs **locally by default** — no data ever has to leave your machin
 
 ---
 
+📸 Screenshots
+| Smart Analyze | Career Chat |
+| :---: | :---: |
+| ![Smart Analyze](.screenshots/smart-analyze.png) | ![Career Chat](.screenshots/career-chat.png) |
+
+| Applications Dashboard | Resume Tailor |
+| :---: | :---: |
+| ![Dashboard](.screenshots/dashboard.png) | ![Resume Tailor](.screenshots/resume-tailor.png) |
+
+---
+
 ## ✨ Key Features
 
 | Module | What it does |
