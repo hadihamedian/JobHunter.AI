@@ -9,7 +9,7 @@ builder.Services.AddHttpClient("", client =>
     client.Timeout = TimeSpan.FromMinutes(5);
 });
 builder.Services.AddScoped<AiAnalyzerService>();
-builder.Services.AddScoped<CareerChatService>(); // <-- اضافه شد
+builder.Services.AddScoped<CareerChatService>(); 
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>

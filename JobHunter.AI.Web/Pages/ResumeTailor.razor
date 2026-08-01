@@ -1,4 +1,5 @@
 ﻿@page "/resume-tailor"
+@implements IDisposable
 @inject HttpClient Http
 @inject ResumeService ResumeService
 @inject IJSRuntime JS
@@ -92,7 +93,7 @@
         disabled="@(isTailoring || selectedResumeId == Guid.Empty || string.IsNullOrWhiteSpace(jobDescription))">
     @if (isTailoring)
     {
-        <span>Tailoring your resume...</span>
+        <span>Tailoring your resume... @elapsedDisplay</span>
     }
     else
     {
@@ -103,7 +104,11 @@
 @if (isTailoring)
 {
     <div style="font-size:11px;color:#555560;text-align:center;margin-top:-10px;margin-bottom:16px">
-        This may take 1-2 minutes — the model is running locally on your system, do not close the page.
+        This may take 1-3 minutes — the model is running locally on your system, do not close the page.
+        @if (elapsedSeconds > 240)
+        {
+            <div>Taking longer than usual — the model may be retrying to fix a formatting issue.</div>
+        }
     </div>
 }
 
@@ -124,6 +129,16 @@
                 {
                     <span style="font-size:11px;padding:2px 8px;border-radius:20px;background:#0f2a1a;color:#4ade80;border:0.5px solid #1a4a2a">
                         +@result.EstimatedAtsImprovement% ATS est.
+                    </span>
+                }
+                <span style="font-size:11px;padding:2px 8px;border-radius:20px;background:#1a1a2a;color:#a5b4fc;border:0.5px solid #2a2a4a">
+                    @result.DurationSeconds.ToString("0.0")s
+                </span>
+                @if (result.WasRetried)
+                {
+                    <span style="font-size:11px;padding:2px 8px;border-radius:20px;background:#2a1f0f;color:#fbbf24;border:0.5px solid #4a3a1a"
+                          title="First attempt was missing content, model retried automatically">
+                        Retried for accuracy
                     </span>
                 }
             </div>
@@ -179,6 +194,11 @@
     bool isSaving = false;
     string? errorMessage = null;
 
+    // --- تایمر زنده سمت کلاینت ---
+    double elapsedSeconds = 0;
+    System.Threading.Timer? clientTimer;
+    string elapsedDisplay => TimeSpan.FromSeconds(elapsedSeconds).ToString(@"mm\:ss");
+
     protected override async Task OnInitializedAsync()
     {
         resumes = await ResumeService.GetAllAsync();
@@ -194,6 +214,15 @@
         isTailoring = true;
         errorMessage = null;
         result = null;
+        elapsedSeconds = 0;
+
+        // این تایمر مستقل از سرور می‌شماره، چون کل درخواست یه HTTP call بلاکینگه
+        // و تا جواب کامل نیاد چیزی از سرور push نمیشه.
+        clientTimer = new System.Threading.Timer(_ =>
+        {
+            elapsedSeconds += 1;
+            InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
         try
         {
@@ -212,8 +241,12 @@
         {
             errorMessage = "Could not connect to the server.";
         }
-
-        isTailoring = false;
+        finally
+        {
+            clientTimer?.Dispose();
+            clientTimer = null;
+            isTailoring = false;
+        }
     }
 
     async Task CopyToClipboard()
@@ -242,7 +275,7 @@
 
     static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UseAdvancedExtensions()
-        .DisableHtml()   // امنیت: خروجی مدل رو نمی‌گذاره HTML خام تزریق کنه
+        .DisableHtml()
         .Build();
 
     string RenderMarkdown(string markdown) => Markdig.Markdown.ToHtml(markdown ?? "", Pipeline);
@@ -253,4 +286,6 @@
         var html = RenderMarkdown(result.TailoredContent);
         await JS.InvokeVoidAsync("openPrintView", html);
     }
+
+    public void Dispose() => clientTimer?.Dispose();
 }

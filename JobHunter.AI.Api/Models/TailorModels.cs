@@ -10,5 +10,7 @@ public record TailorResult(
     string TailoredContent,
     List<string> KeywordsAdded,
     List<string> SectionsRewritten,
-    int EstimatedAtsImprovement
+    int EstimatedAtsImprovement,
+    bool WasRetried = false,          // جدید
+    double DurationSeconds = 0        // جدید — کل زمان تولید (شامل retry اگه بود)
 );

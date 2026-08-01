@@ -10,5 +10,7 @@ public record TailorResult(
     string TailoredContent,
     List<string> KeywordsAdded,
     List<string> SectionsRewritten,
-    int EstimatedAtsImprovement
+    int EstimatedAtsImprovement,
+    bool WasRetried = false,
+    double DurationSeconds = 0
 );
