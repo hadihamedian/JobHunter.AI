@@ -47,7 +47,7 @@
                                     @resume.Name
                                     @if (resume.IsDefault)
                                     {
-                                        <span class="default-badge" style="margin-left:6px">Default</span>
+                                        @* <span class="default-badge" style="margin-left:6px">Default</span> *@
                                     }
                                 </div>
                                 <div class="resume-option-meta">@resume.WordCount words · @resume.CreatedAt.ToString("MMM d")</div>
@@ -81,9 +81,29 @@
     <div class="result-panel">
         <div class="result-header">
             <div style="font-size:13px;font-weight:500;color:#e8e8ea">Analysis result</div>
-            <div style="text-align:right">
-                <div style="font-size:10px;color:#555560;margin-bottom:2px">ATS score</div>
-                <div class="score">@result.AtsScore<span style="font-size:14px;color:#555560">/100</span></div>
+
+            <div class="ats-ring-wrap">
+                <svg width="110" height="110" viewBox="0 0 110 110" class="ats-ring-svg">
+                    <circle cx="55" cy="55" r="46" fill="none" stroke="#22222a" stroke-width="8" />
+                    <circle cx="55" cy="55" r="46" fill="none"
+                            stroke="url(#atsGradient)"
+                            stroke-width="8"
+                            stroke-linecap="round"
+                            stroke-dasharray="@ScoreCircumference"
+                            stroke-dashoffset="@ScoreOffset"
+                            transform="rotate(-90 55 55)"
+                            style="transition: stroke-dashoffset 1s ease-out;" />
+                    <defs>
+                        <linearGradient id="atsGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="@GradientStart" />
+                            <stop offset="100%" stop-color="@GradientEnd" />
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <div class="ats-ring-center">
+                    <div class="ats-ring-number">@result.AtsScore</div>
+                    <div class="ats-ring-label">/100</div>
+                </div>
             </div>
         </div>
 
@@ -197,6 +217,12 @@
     AnalyzeResult? result = null;
     bool isAnalyzing = false;
     string? errorMessage = null;
+    double ScoreCircumference => 2 * Math.PI * 46;
+    double ScoreOffset => ScoreCircumference - (result!.AtsScore / 100.0 * ScoreCircumference);
+
+    string GradientStart => result!.AtsScore >= 75 ? "#818cf8" : result.AtsScore >= 50 ? "#facc15" : "#f87171";
+    string GradientEnd => result!.AtsScore >= 75 ? "#c084fc" : result.AtsScore >= 50 ? "#fb923c" : "#ef4444";
+
 
     // Chat
     List<(string Role, string Content)> chatMessages = new();
