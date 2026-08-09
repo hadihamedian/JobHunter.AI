@@ -13,7 +13,11 @@ builder.Services.AddScoped<CareerChatService>();
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
-        policy.WithOrigins("http://localhost:5150")
+        policy.WithOrigins(
+                "http://localhost:5150",
+                "http://localhost:5065",
+                "http://localhost:80"
+            )
             .AllowAnyHeader()
             .AllowAnyMethod());
 });

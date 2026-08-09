@@ -1,0 +1,87 @@
+services:
+  # ---------- PostgreSQL Database ----------
+  postgres:
+    image: postgres:16
+    container_name: postgres-1
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: jobassistant
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - jobhunter-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------- ASP.NET Core API ----------
+  api:
+    build:
+      context: .
+      dockerfile: JobHunter.AI.Api/Dockerfile
+    container_name: jobhunter-api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Docker
+      - ASPNETCORE_URLS=http://+:8080
+      - Ollama__Url=http://host.docker.internal:11434/api/generate
+      - Ollama__Model=llama3.1:8b
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=jobassistant;Username=postgres;Password=postgres
+    ports:
+      - "5065:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - jobhunter-network
+    # for accessing ollama on linux host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # ---------- Blazor Web (Nginx) ----------
+  web:
+    build:
+      context: .
+      dockerfile: JobHunter.AI.Web/Dockerfile
+    container_name: jobhunter-web
+    ports:
+      - "5150:80"
+    depends_on:
+      - api
+    networks:
+      - jobhunter-network
+    restart: unless-stopped
+
+  # ---------- Ollama (if you don't want to run on host) ----------
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: jobhunter-ollama
+  #   ports:
+  #     - "11434:11414"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   networks:
+  #     - jobhunter-network
+  #   # برای GPU NVIDIA:
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  #   restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: jobassistant_pgdata
+  # ollama_data:
+
+networks:
+  jobhunter-network:
+    driver: bridge
