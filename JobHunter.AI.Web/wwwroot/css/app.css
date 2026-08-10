@@ -622,6 +622,8 @@ textarea {
     align-items: center;
     justify-content: center;
     z-index: 100;
+    padding: 32px 16px;
+    overflow-y: auto;
 }
 
 .modal {
@@ -631,6 +633,8 @@ textarea {
     padding: 20px;
     width: 440px;
     max-width: 90vw;
+    max-height: calc(100vh - 64px);
+    overflow-y: auto;
 }
 
 .modal-title {
@@ -1858,9 +1862,9 @@ textarea {
     gap: 6px;
 }
 
-.change-item:last-child {
+    .change-item:last-child {
         border-bottom: none;
-}
+    }
 
 
 .ats-ring-wrap {
@@ -1892,3 +1896,18 @@ textarea {
     margin-top: 2px;
 }
 
+
+
+.btn-delete {
+    background: transparent;
+    border: none;
+    color: #f87171;
+    font-size: 14px;
+    cursor: pointer;
+    font-family: inherit;
+    padding: 0;
+}
+
+    .btn-delete:hover {
+        color: #ef4444;
+    }
