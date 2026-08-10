@@ -28,3 +28,7 @@ public record DataChatMessage(string Role, string Content);
 public record DataChatResponse(string TextAnswer, DataTable? Table);
 
 public record DataTable(List<string> Columns, List<List<string>> Rows);
+
+public record SemanticSearchRequest(string Query);
+
+public record SemanticSearchResponse(List<Guid> MatchingIds, string Explanation);

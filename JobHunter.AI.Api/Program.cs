@@ -35,6 +35,7 @@ builder.Services.AddScoped<InterviewGeneratorService>();
 builder.Services.AddScoped<InterviewBankChatService>();
 builder.Services.AddScoped<CareerAdvisorService>();
 builder.Services.AddScoped<ResumeTailorService>();
+builder.Services.AddScoped<SemanticSearchService>();
 
 var app = builder.Build();
 app.UseRouting();
@@ -72,6 +73,16 @@ app.MapPost("/api/chat", async (ChatRequest request, CareerChatService chatServi
 
     var response = await chatService.ChatAsync(request);
     return Results.Ok(response);
+});
+
+app.MapPost("/semantic-search", async (SemanticSearchRequest req, SemanticSearchService svc) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Query))
+        return Results.BadRequest("Query is required.");
+    var result = await svc.SearchAsync(req.Query);
+    return result is null
+        ? Results.Problem("AI search failed. Make sure Ollama is running.", statusCode: 500)
+        : Results.Ok(result);
 });
 
 app.MapPost("/api/career-chat", async (

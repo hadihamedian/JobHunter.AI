@@ -1911,3 +1911,37 @@ textarea {
     .btn-delete:hover {
         color: #ef4444;
     }
+/*--- Smart Search --- */
+.smart-search-toggle {
+    background: transparent;
+    border: 0.5px solid #2a2a2e;
+    border-radius: 6px;
+    color: #8a8a95;
+    font-size: 12px;
+    padding: 6px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    margin-left: 8px;
+    font-family: inherit;
+    transition: all 0.15s;
+}
+
+    .smart-search-toggle:hover {
+        border-color: #6366f1;
+        color: #e8e8ea;
+    }
+
+    .smart-search-toggle.active {
+        background: #252535;
+        border-color: #6366f1;
+        color: #a5b4fc;
+    }
+
+.smart-search-hint {
+    font-size: 12px;
+    color: #a5b4fc;
+    margin-top: -8px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+}

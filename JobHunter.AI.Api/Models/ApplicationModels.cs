@@ -84,3 +84,12 @@ public record DataTable(
 );
 
 public record ReorderRequest(Guid Id, int NewPriority);
+
+public record ApplicationLite(
+    Guid Id, string CompanyName, string Position, string Source, string Status,
+    int? AtsScore, string? Notes, DateTimeOffset? AppliedAt, DateTimeOffset CreatedAt
+);
+
+public record SemanticSearchRequest(string Query);
+
+public record SemanticSearchResponse(List<Guid> MatchingIds, string Explanation);

@@ -72,4 +72,11 @@ public class ApplicationService(HttpClient http)
         }
         catch { return false; }
     }
+
+    public async Task<SemanticSearchResponse?> SemanticSearchAsync(SemanticSearchRequest req)
+    {
+        var res = await http.PostAsJsonAsync("/api/applications/semantic-search", req);
+        if (res.IsSuccessStatusCode) return await res.Content.ReadFromJsonAsync<SemanticSearchResponse>();
+        return null;
+    }
 }

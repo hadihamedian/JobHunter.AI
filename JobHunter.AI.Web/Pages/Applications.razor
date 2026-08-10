@@ -43,14 +43,39 @@
 		<path d="m21 21-4.35-4.35"></path>
 	</svg>
 	<input class="search-input"
-		   placeholder="Search by company, position, notes..."
+		   placeholder="@(isSmartMode ? "Describe what you're looking for, then press Enter..." : "Search by company, position, notes...")"
 		   value="@searchQuery"
-		   @oninput="OnSearchInput" />
+		   @oninput="OnSearchInput"
+		   @onkeydown="OnSearchKeyDown" />
 	@if (!string.IsNullOrEmpty(searchQuery))
 	{
 		<button class="search-clear" @onclick="ClearSearch">✕</button>
 	}
+	<button class="smart-search-toggle @(isSmartMode ? "active" : "")"
+			@onclick="ToggleSmartMode"
+			title="Toggle AI-powered smart search">
+		✨ Smart search
+	</button>
 </div>
+
+@if (isSmartMode)
+{
+	<div class="smart-search-hint">
+		@if (isSemanticSearching)
+		{
+			<span>✨ Thinking...</span>
+		}
+		else if (semanticExplanation != null)
+		{
+			<span>✨ @semanticExplanation</span>
+			<button class="btn-cancel" style="padding:2px 8px;font-size:11px;margin-left:8px" @onclick="ClearSemanticSearch">Clear</button>
+		}
+		else
+		{
+			<span style="color:#555560">e.g. "apps that look promising right now" or "شرکت‌هایی که جواب ندادن" — press Enter</span>
+		}
+	</div>
+}
 
 <div style="margin: 20px 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
 	<select class="form-select" style="width:auto;min-width:180px" @bind="statusFilter">
@@ -414,6 +439,10 @@ else
 	string editJobDescription = "";
 	string? errorMessage = null;
 	CancellationTokenSource? searchDebounceCts;
+	bool isSmartMode = false;
+	bool isSemanticSearching = false;
+	string? semanticExplanation = null;
+	HashSet<Guid>? semanticMatchIds = null;
 
 	class ApplicationFormModel
 	{
@@ -442,7 +471,8 @@ else
 
 	IEnumerable<ApplicationSummary> filteredApps => applications.Where(a =>
 		(statusFilter == "All" || a.Status == statusFilter) &&
-		(sourceFilter == "All" || a.Source == sourceFilter));
+		(sourceFilter == "All" || a.Source == sourceFilter) &&
+		(semanticMatchIds == null || semanticMatchIds.Contains(a.Id)));
 
 	protected override async Task OnInitializedAsync()
 	{
@@ -679,26 +709,85 @@ else
 	async Task OnSearchInput(ChangeEventArgs e)
 	{
 		searchQuery = e.Value?.ToString() ?? "";
+		if (isSmartMode) return; // توی حالت smart فقط با Enter اجرا میشه
 
 		searchDebounceCts?.Cancel();
 		searchDebounceCts = new CancellationTokenSource();
 		var token = searchDebounceCts.Token;
-
 		try
 		{
 			await Task.Delay(350, token);
-			if (!token.IsCancellationRequested)
+			if (!token.IsCancellationRequested) await LoadData();
+		}
+		catch (TaskCanceledException) { }
+	}
+
+	async Task OnSearchKeyDown(KeyboardEventArgs e)
+	{
+		if (e.Key == "Enter" && isSmartMode) await RunSemanticSearch();
+	}
+
+	async Task ToggleSmartMode()
+	{
+		isSmartMode = !isSmartMode;
+		semanticMatchIds = null;
+		semanticExplanation = null;
+		searchQuery = string.Empty;
+		await LoadData();
+	}
+
+	async Task RunSemanticSearch()
+	{
+		if (string.IsNullOrWhiteSpace(searchQuery))
+		{
+			semanticMatchIds = null;
+			semanticExplanation = null;
+			return;
+		}
+
+		isSemanticSearching = true;
+		semanticExplanation = null;
+		StateHasChanged();
+
+		try
+		{
+			var result = await AppService.SemanticSearchAsync(new SemanticSearchRequest(searchQuery));
+			if (result != null)
 			{
-				await LoadData();
+				semanticMatchIds = result.MatchingIds.ToHashSet();
+				semanticExplanation = result.Explanation;
+			}
+			else
+			{
+				semanticMatchIds = new HashSet<Guid>();
+				semanticExplanation = "AI search failed. Make sure Ollama is running.";
 			}
 		}
-		catch (TaskCanceledException) {  }
+		catch
+		{
+			semanticMatchIds = new HashSet<Guid>();
+			semanticExplanation = "Error connecting to AI.";
+		}
+		finally
+		{
+			isSemanticSearching = false;
+			StateHasChanged();
+		}
+	}
+
+	void ClearSemanticSearch()
+	{
+		semanticMatchIds = null;
+		semanticExplanation = null;
+		searchQuery = string.Empty;
 	}
 
 	async Task ClearSearch()
 	{
 		searchDebounceCts?.Cancel();
 		searchQuery = string.Empty;
+		semanticMatchIds = null;
+		semanticExplanation = null;
 		await LoadData();
 	}
 

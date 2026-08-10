@@ -265,4 +265,27 @@ FROM ""Applications"" ORDER BY ""CreatedAt"" DESC LIMIT 20";
         updateCmd.Parameters.AddWithValue(id);
         return await updateCmd.ExecuteNonQueryAsync() > 0;
     }
+
+    public async Task<List<ApplicationLite>> GetAllLiteAsync()
+    {
+        var list = new List<ApplicationLite>();
+        var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""Source"", ""Status"", ""AtsScore"", ""Notes"", ""AppliedAt"", ""CreatedAt""
+FROM ""Applications"" ORDER BY ""Priority"" ASC, ""CreatedAt"" DESC";
+
+        await using var cmd = db.CreateCommand(sql);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new ApplicationLite(
+                reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
+                reader.GetString(3), reader.GetString(4),
+                reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.IsDBNull(7) ? null : reader.GetDateTime(7),
+                reader.GetDateTime(8)
+            ));
+        }
+        return list;
+    }
+
 }
