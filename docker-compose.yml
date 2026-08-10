@@ -2,7 +2,7 @@ services:
   # ---------- PostgreSQL Database ----------
   postgres:
     image: postgres:16
-    container_name: postgres-1
+    container_name: jobhunter-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -79,7 +79,7 @@ services:
 
 volumes:
   postgres_data:
-    name: jobassistant_pgdata
+  # name: jobassistant_pgdata
   # ollama_data:
 
 networks:
