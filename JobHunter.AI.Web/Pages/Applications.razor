@@ -253,6 +253,16 @@ else
 				</select>
 			</div>
 			<div class="form-group">
+				<label class="form-label">Resume sent</label>
+				<select class="form-select" @bind="formModel.ResumeId">
+					<option value="">— none —</option>
+					@foreach (var r in allResumes)
+					{
+						<option value="@r.Id">@r.Name@(r.IsDefault ? " (default)" : "")</option>
+					}
+				</select>
+			</div>
+			<div class="form-group">
 				<label class="form-label">Status</label>
 				<select class="form-select" @bind="formModel.Status">
 					<option value="Saved">Saved</option>
@@ -313,6 +323,16 @@ else
 				<div class="form-group">
 					<label class="form-label">Position</label>
 					<input class="form-input" @bind="editPosition" />
+				</div>
+				<div class="form-group">
+					<label class="form-label">Resume sent</label>
+					<select class="form-select" @bind="editResumeId">
+						<option value="">— none —</option>
+						@foreach (var r in allResumes)
+						{
+							<option value="@r.Id">@r.Name@(r.IsDefault ? " (default)" : "")</option>
+						}
+					</select>
 				</div>
 				<div class="form-group">
 					<label class="form-label">Status</label>
@@ -443,6 +463,8 @@ else
 	bool isSemanticSearching = false;
 	string? semanticExplanation = null;
 	HashSet<Guid>? semanticMatchIds = null;
+	List<ResumeSummary> allResumes = new();
+	string editResumeId = "";
 
 	class ApplicationFormModel
 	{
@@ -450,6 +472,7 @@ else
 		public string Position { get; set; } = "";
 		public string Source { get; set; } = "LinkedIn";
 		public string Status { get; set; } = "Applied";
+		public string ResumeId { get; set; } = ""; 
 	}
 	ApplicationFormModel formModel = new();
 	DateTime addDateOnly = DateTime.Today;
@@ -476,6 +499,7 @@ else
 
 	protected override async Task OnInitializedAsync()
 	{
+		allResumes = await ResumeService.GetAllAsync();
 		await LoadData();
 	}
 
@@ -495,12 +519,15 @@ else
 
 	async Task SaveApplication()
 	{
+		Guid? resumeId = Guid.TryParse(formModel.ResumeId, out var rid) ? rid : null;
+
 		var req = new CreateApplicationRequest(
 			formModel.CompanyName,
 			formModel.Position,
 			null,
 			formModel.Source,
 			null,
+			resumeId,
 			formModel.Status,
 			null,
 			null,
@@ -525,6 +552,7 @@ else
 			editStatus = editingApp.Status;
 			editJobUrl = editingApp.JobUrl ?? "";
 			editAppliedAt = editingApp.AppliedAt;
+			editResumeId = editingApp.ResumeId?.ToString() ?? "";
 			activeModalTab = "details";
 			await LoadAppQuestions(id);
 			showEditModal = true;
@@ -543,12 +571,16 @@ else
 		if (editingApp is null) return;
 		isSaving = true;
 
+		Guid? resumeId = Guid.TryParse(editResumeId, out var rid) ? rid : null;
+
 		await AppService.UpdateAsync(editingApp.Id, new UpdateApplicationRequest(
 			string.IsNullOrWhiteSpace(editCompanyName) ? null : editCompanyName,
 			string.IsNullOrWhiteSpace(editPosition) ? null : editPosition,
 			string.IsNullOrWhiteSpace(editJobUrl) ? null : editJobUrl,
 			string.IsNullOrWhiteSpace(editJobDescription) ? null : editJobDescription,
-			null, null,
+			null,
+			null,
+			resumeId,
 			editStatus,
 			null,
 			string.IsNullOrWhiteSpace(editNotes) ? null : editNotes,

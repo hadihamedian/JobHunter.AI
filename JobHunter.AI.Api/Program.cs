@@ -194,10 +194,26 @@ resumes.MapPatch("/{id:guid}", async (Guid id, UpdateResumeRequest req, ResumeRe
     return ok ? Results.NoContent() : Results.NotFound();
 });
 
-resumes.MapDelete("/{id:guid}", async (Guid id, ResumeRepository repo) =>
+resumes.MapGet("/{id:guid}/usage", async (Guid id, ApplicationRepository appRepo) =>
+    Results.Ok(new ResumeUsage(await appRepo.GetByResumeIdAsync(id))));
+
+resumes.MapDelete("/{id:guid}", async (Guid id, ResumeRepository repo, ApplicationRepository appRepo) =>
 {
-    var ok = await repo.DeleteAsync(id);
-    return ok ? Results.NoContent() : Results.NotFound();
+    var usage = await appRepo.GetByResumeIdAsync(id);
+    if (usage.Count > 0)
+        return Results.Conflict(new ResumeUsage(usage));
+
+    try
+    {
+        var ok = await repo.DeleteAsync(id);
+        return ok ? Results.NoContent() : Results.NotFound();
+    }
+    catch (Npgsql.PostgresException ex) when (ex.SqlState == "23503")
+    {
+        // race condition safety net: یه اپلیکیشن بین چک ما و حذف واقعی وصل شد
+        var freshUsage = await appRepo.GetByResumeIdAsync(id);
+        return Results.Conflict(new ResumeUsage(freshUsage));
+    }
 });
 
 

@@ -46,3 +46,9 @@ public record ResumeScore(
     string ResumeName,
     int Score
 );
+
+public record ResumeUsage(List<ResumeUsageApplication> Applications);
+
+public record ResumeUsageApplication(Guid Id, string CompanyName, string Position, string Status);
+
+public record ResumeDeleteResult(bool Success, List<ResumeUsageApplication>? BlockedBy);

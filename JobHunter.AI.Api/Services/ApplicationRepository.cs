@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS ""Applications"" (
 );
 ALTER TABLE ""Applications"" ADD COLUMN IF NOT EXISTS ""Priority"" INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ""Applications"" ADD COLUMN IF NOT EXISTS ""JobDescription"" TEXT;
+ALTER TABLE ""Applications"" ADD COLUMN IF NOT EXISTS ""ResumeId"" UUID REFERENCES ""Resumes""(""Id"") ON DELETE RESTRICT;
 ";
         await using var cmd = dataSource.CreateCommand(sql);
         await cmd.ExecuteNonQueryAsync();
@@ -32,24 +33,26 @@ ALTER TABLE ""Applications"" ADD COLUMN IF NOT EXISTS ""JobDescription"" TEXT;
     public async Task<List<ApplicationSummary>> GetAllAsync(string? status = null, string? search = null)
     {
         var list = new List<ApplicationSummary>();
-        var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""JobUrl"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""AppliedAt"", ""CreatedAt"", ""Priority""
-FROM ""Applications"" WHERE 1=1";
+        var sql = @"SELECT a.""Id"", a.""CompanyName"", a.""Position"", a.""JobUrl"", a.""Source"", a.""ResumeVersion"", a.""ResumeId"", r.""Name"", a.""Status"", a.""AtsScore"", a.""AppliedAt"", a.""CreatedAt"", a.""Priority""
+FROM ""Applications"" a
+LEFT JOIN ""Resumes"" r ON r.""Id"" = a.""ResumeId""
+WHERE 1=1";
 
         var paramIndex = 1;
 
         if (!string.IsNullOrEmpty(status))
         {
-            sql += $@" AND ""Status"" = ${paramIndex}";
+            sql += $@" AND a.""Status"" = ${paramIndex}";
             paramIndex++;
         }
 
         if (!string.IsNullOrEmpty(search))
         {
-            sql += $@" AND (""CompanyName"" ILIKE ${paramIndex} OR ""Position"" ILIKE ${paramIndex} OR ""Notes"" ILIKE ${paramIndex} OR ""JobDescription"" ILIKE ${paramIndex})";
+            sql += $@" AND (a.""CompanyName"" ILIKE ${paramIndex} OR a.""Position"" ILIKE ${paramIndex} OR a.""Notes"" ILIKE ${paramIndex} OR a.""JobDescription"" ILIKE ${paramIndex})";
             paramIndex++;
         }
 
-        sql += @" ORDER BY ""Priority"" ASC, ""CreatedAt"" DESC";
+        sql += @" ORDER BY a.""Priority"" ASC, a.""CreatedAt"" DESC";
 
         await using var cmd = db.CreateCommand(sql);
         if (!string.IsNullOrEmpty(status))
@@ -65,11 +68,13 @@ FROM ""Applications"" WHERE 1=1";
                 reader.IsDBNull(3) ? null : reader.GetString(3),
                 reader.GetString(4),
                 reader.IsDBNull(5) ? null : reader.GetString(5),
-                reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                reader.IsDBNull(8) ? null : reader.GetDateTime(8),
-                reader.GetDateTime(9),
-                reader.GetInt32(10)
+                reader.IsDBNull(6) ? null : reader.GetGuid(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7),
+                reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetInt32(9),
+                reader.IsDBNull(10) ? null : reader.GetDateTime(10),
+                reader.GetDateTime(11),
+                reader.GetInt32(12)
             ));
         }
         return list;
@@ -77,8 +82,10 @@ FROM ""Applications"" WHERE 1=1";
 
     public async Task<ApplicationDetail?> GetByIdAsync(Guid id)
     {
-        var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""JobUrl"", ""JobDescription"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""Notes"", ""AppliedAt"", ""CreatedAt"", ""UpdatedAt"", ""Priority""
-FROM ""Applications"" WHERE ""Id"" = $1";
+        var sql = @"SELECT a.""Id"", a.""CompanyName"", a.""Position"", a.""JobUrl"", a.""JobDescription"", a.""Source"", a.""ResumeVersion"", a.""ResumeId"", r.""Name"", a.""Status"", a.""AtsScore"", a.""Notes"", a.""AppliedAt"", a.""CreatedAt"", a.""UpdatedAt"", a.""Priority""
+FROM ""Applications"" a
+LEFT JOIN ""Resumes"" r ON r.""Id"" = a.""ResumeId""
+WHERE a.""Id"" = $1";
         await using var cmd = db.CreateCommand(sql);
         cmd.Parameters.AddWithValue(id);
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -90,13 +97,15 @@ FROM ""Applications"" WHERE ""Id"" = $1";
                 reader.IsDBNull(4) ? null : reader.GetString(4),
                 reader.GetString(5),
                 reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.GetString(7),
-                reader.IsDBNull(8) ? null : reader.GetInt32(8),
-                reader.IsDBNull(9) ? null : reader.GetString(9),
-                reader.IsDBNull(10) ? null : reader.GetDateTime(10),
-                reader.GetDateTime(11),
+                reader.IsDBNull(7) ? null : reader.GetGuid(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetInt32(10),
+                reader.IsDBNull(11) ? null : reader.GetString(11),
                 reader.IsDBNull(12) ? null : reader.GetDateTime(12),
-                reader.GetInt32(13)
+                reader.GetDateTime(13),
+                reader.IsDBNull(14) ? null : reader.GetDateTime(14),
+                reader.GetInt32(15)
             );
         }
         return null;
@@ -104,14 +113,15 @@ FROM ""Applications"" WHERE ""Id"" = $1";
 
     public async Task<Guid> CreateAsync(CreateApplicationRequest req)
     {
-        var sql = @"INSERT INTO ""Applications"" (""CompanyName"", ""Position"", ""JobUrl"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""Notes"", ""AppliedAt"", ""Priority"")
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING ""Id"";";
+        var sql = @"INSERT INTO ""Applications"" (""CompanyName"", ""Position"", ""JobUrl"", ""Source"", ""ResumeVersion"", ""ResumeId"", ""Status"", ""AtsScore"", ""Notes"", ""AppliedAt"", ""Priority"")
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING ""Id"";";
         await using var cmd = db.CreateCommand(sql);
         cmd.Parameters.AddWithValue(req.CompanyName);
         cmd.Parameters.AddWithValue(req.Position);
         cmd.Parameters.AddWithValue(req.JobUrl ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.Source);
         cmd.Parameters.AddWithValue(req.ResumeVersion ?? (object)DBNull.Value);
+        cmd.Parameters.AddWithValue(req.ResumeId ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.Status);
         cmd.Parameters.AddWithValue(req.AtsScore ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.Notes ?? (object)DBNull.Value);
@@ -129,6 +139,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING ""Id"";";
 ""JobDescription"" = $4,
 ""Source"" = COALESCE($5, ""Source""),
 ""ResumeVersion"" = $6,
+""ResumeId"" = $13,
 ""Status"" = COALESCE($7, ""Status""),
 ""AtsScore"" = $8,
 ""Notes"" = $9,
@@ -149,6 +160,7 @@ WHERE ""Id"" = $11";
         cmd.Parameters.AddWithValue(req.AppliedAt ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(id);
         cmd.Parameters.AddWithValue(req.Priority ?? (object)DBNull.Value);
+        cmd.Parameters.AddWithValue(req.ResumeId ?? (object)DBNull.Value);
         return await cmd.ExecuteNonQueryAsync() > 0;
     }
 
@@ -188,8 +200,10 @@ SELECT
     public async Task<List<ApplicationDetail>> GetAllForChatAsync()
     {
         var list = new List<ApplicationDetail>();
-        var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""JobUrl"", ""JobDescription"", ""Source"", ""ResumeVersion"", ""Status"", ""AtsScore"", ""Notes"", ""AppliedAt"", ""CreatedAt"", ""UpdatedAt"", ""Priority""
-FROM ""Applications"" ORDER BY ""CreatedAt"" DESC LIMIT 20";
+        var sql = @"SELECT a.""Id"", a.""CompanyName"", a.""Position"", a.""JobUrl"", a.""JobDescription"", a.""Source"", a.""ResumeVersion"", a.""ResumeId"", r.""Name"", a.""Status"", a.""AtsScore"", a.""Notes"", a.""AppliedAt"", a.""CreatedAt"", a.""UpdatedAt"", a.""Priority""
+FROM ""Applications"" a
+LEFT JOIN ""Resumes"" r ON r.""Id"" = a.""ResumeId""
+ORDER BY a.""CreatedAt"" DESC LIMIT 20";
         await using var cmd = db.CreateCommand(sql);
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -200,13 +214,15 @@ FROM ""Applications"" ORDER BY ""CreatedAt"" DESC LIMIT 20";
                 reader.IsDBNull(4) ? null : reader.GetString(4),
                 reader.GetString(5),
                 reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.GetString(7),
-                reader.IsDBNull(8) ? null : reader.GetInt32(8),
-                reader.IsDBNull(9) ? null : reader.GetString(9),
-                reader.IsDBNull(10) ? null : reader.GetDateTime(10),
-                reader.GetDateTime(11),
+                reader.IsDBNull(7) ? null : reader.GetGuid(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetInt32(10),
+                reader.IsDBNull(11) ? null : reader.GetString(11),
                 reader.IsDBNull(12) ? null : reader.GetDateTime(12),
-                reader.GetInt32(13)
+                reader.GetDateTime(13),
+                reader.IsDBNull(14) ? null : reader.GetDateTime(14),
+                reader.GetInt32(15)
             ));
         }
         return list;
@@ -284,6 +300,22 @@ FROM ""Applications"" ORDER BY ""Priority"" ASC, ""CreatedAt"" DESC";
                 reader.IsDBNull(7) ? null : reader.GetDateTime(7),
                 reader.GetDateTime(8)
             ));
+        }
+        return list;
+    }
+
+    public async Task<List<ResumeUsageApplication>> GetByResumeIdAsync(Guid resumeId)
+    {
+        var list = new List<ResumeUsageApplication>();
+        var sql = @"SELECT ""Id"", ""CompanyName"", ""Position"", ""Status""
+FROM ""Applications"" WHERE ""ResumeId"" = $1 ORDER BY ""CreatedAt"" DESC";
+        await using var cmd = db.CreateCommand(sql);
+        cmd.Parameters.AddWithValue(resumeId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new ResumeUsageApplication(
+                reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3)));
         }
         return list;
     }

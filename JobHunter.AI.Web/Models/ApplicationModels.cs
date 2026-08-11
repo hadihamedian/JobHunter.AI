@@ -1,21 +1,21 @@
 ﻿namespace JobHunter.AI.Web.Models;
 
 public record ApplicationSummary(Guid Id, string CompanyName, string Position,
-    string? JobUrl, string Source, string? ResumeVersion, string Status,
-    int? AtsScore, DateTimeOffset? AppliedAt, DateTimeOffset CreatedAt, int Priority);
+    string? JobUrl, string Source, string? ResumeVersion, Guid? ResumeId, string? ResumeName,
+    string Status, int? AtsScore, DateTimeOffset? AppliedAt, DateTimeOffset CreatedAt, int Priority);
 
 public record ApplicationDetail(Guid Id, string CompanyName, string Position,
     string? JobUrl, string? JobDescription, string Source, string? ResumeVersion,
-    string Status, int? AtsScore, string? Notes, DateTimeOffset? AppliedAt,
-    DateTimeOffset CreatedAt, DateTimeOffset? UpdatedAt, int Priority);
+    Guid? ResumeId, string? ResumeName, string Status, int? AtsScore, string? Notes,
+    DateTimeOffset? AppliedAt, DateTimeOffset CreatedAt, DateTimeOffset? UpdatedAt, int Priority);
 
 public record CreateApplicationRequest(string CompanyName, string Position,
-    string? JobUrl, string Source, string? ResumeVersion, string Status,
+    string? JobUrl, string Source, string? ResumeVersion, Guid? ResumeId, string Status,
     int? AtsScore, string? Notes, DateTimeOffset? AppliedAt, int Priority = 0);
 
 public record UpdateApplicationRequest(string? CompanyName, string? Position,
     string? JobUrl, string? JobDescription, string? Source, string? ResumeVersion,
-    string? Status, int? AtsScore, string? Notes, DateTimeOffset? AppliedAt, 
+    Guid? ResumeId, string? Status, int? AtsScore, string? Notes, DateTimeOffset? AppliedAt,
     int? Priority);
 
 public record DashboardStats(int TotalApplications, int ActiveInterviews,

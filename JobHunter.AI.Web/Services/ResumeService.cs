@@ -46,14 +46,32 @@ public class ResumeService(HttpClient http)
         catch { return false; }
     }
 
-    public async Task<bool> DeleteAsync(Guid id)
+    public async Task<ResumeUsage?> GetUsageAsync(Guid id)
+    {
+        try
+        {
+            return await http.GetFromJsonAsync<ResumeUsage>($"/api/resumes/{id}/usage");
+        }
+        catch { return null; }
+    }
+
+    public async Task<ResumeDeleteResult> DeleteAsync(Guid id)
     {
         try
         {
             var response = await http.DeleteAsync($"/api/resumes/{id}");
-            return response.IsSuccessStatusCode;
+            if (response.IsSuccessStatusCode)
+                return new ResumeDeleteResult(true, null);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                var usage = await response.Content.ReadFromJsonAsync<ResumeUsage>();
+                return new ResumeDeleteResult(false, usage?.Applications ?? new());
+            }
+
+            return new ResumeDeleteResult(false, new());
         }
-        catch { return false; }
+        catch { return new ResumeDeleteResult(false, new()); }
     }
 
     public async Task<ResumeRecommendation?> RecommendAsync(string jobDescription)
