@@ -1,5 +1,6 @@
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
+using JobHunter.AI.Api.Services.Opportunity;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -36,6 +37,7 @@ builder.Services.AddScoped<InterviewBankChatService>();
 builder.Services.AddScoped<CareerAdvisorService>();
 builder.Services.AddScoped<ResumeTailorService>();
 builder.Services.AddScoped<SemanticSearchService>();
+builder.Services.AddScoped<OpportunityRepository>();
 
 var app = builder.Build();
 app.UseRouting();
@@ -261,5 +263,6 @@ interviews.MapPost("/chat",
 await ResumeRepository.InitDbAsync(dataSource);
 await InterviewRepository.InitDbAsync(dataSource);
 await ApplicationRepository.InitDbAsync(dataSource);
+await OpportunityRepository.InitDbAsync(dataSource);
 
 app.Run();
