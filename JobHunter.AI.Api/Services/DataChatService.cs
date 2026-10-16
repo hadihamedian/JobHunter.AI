@@ -1,81 +1,95 @@
 ﻿using System.Text.Json;
-using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 using JobHunter.AI.Api.Models;
+using JobHunter.AI.Api.Skills;
+using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace JobHunter.AI.Api.Services;
 
-public class DataChatService(HttpClient httpClient, IConfiguration configuration, ApplicationRepository repository)
+public class DataChatService(IChatClient chatClient, ApplicationDataSkills skills)
 {
     public async Task<DataChatResponse?> ChatAsync(DataChatRequest request)
     {
-        var applications = await repository.GetAllForChatAsync();
-        var appsJson = JsonSerializer.Serialize(applications, new JsonSerializerOptions { WriteIndented = true });
-        
-        var url = configuration["Ollama:Url"] ?? "http://localhost:11434/api/generate";
-        var model = configuration["Ollama:Model"] ?? "llama3.2";
-        var today = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd");
-
-        var prompt = $@"You are a data analyst assistant for a job application tracker.
-The user has the following job applications in their database:
-{appsJson}
-
-Today's date is {today}.
-
-Answer the user's question about their job applications.
-You MUST respond with ONLY a JSON object in this exact format:
-{{
-  ""textAnswer"": ""Your conversational answer here (1-3 sentences)"",
-  ""hasTable"": true or false,
-  ""tableColumns"": [""Column1"", ""Column2"", ""Column3""],
-  ""tableRows"": [[""val1"", ""val2"", ""val3""], [""val4"", ""val5"", ""val6""]]
-}}
-
-If no table is needed, set hasTable to false and tableColumns/tableRows to empty arrays.
-Always answer in the same language the user writes in (Persian or English).
-Be specific and reference actual company names and dates from the data.
-
-Question: {request.Question}";
-
-        var requestPayload = new
+        // 1. Convert C# methods into AI-invocable functions (Skills)
+        var tools = new List<AITool>
         {
-            model = model,
-            prompt = prompt,
-            stream = false,
-            format = "json",
-            options = new { temperature = 0 }
+            AIFunctionFactory.Create(skills.GetDashboardStatsAsync),
+            AIFunctionFactory.Create(skills.GetApplicationsAsync),
+            AIFunctionFactory.Create(skills.GetApplicationByIdAsync)
         };
 
-        var response = await httpClient.PostAsJsonAsync(url, requestPayload);
-        response.EnsureSuccessStatusCode();
+        // 2. Build system instructions using Microsoft.Extensions.AI.ChatMessage
+        var messages = new List<AiChatMessage>
+        {
+            new(ChatRole.System, """
+                You are a data assistant specialized in job application analytics.
+                You have access to functions for fetching application metrics and details.
+                Use the available tools when needed to answer questions accurately.
+                Always respond in JSON format matching the following schema:
+                {
+                  "textAnswer": "Conversational answer (1-3 sentences)",
+                  "hasTable": true or false,
+                  "tableColumns": ["Column1", "Column2"],
+                  "tableRows": [["val1", "val2"]]
+                }
+                If no table is needed, set hasTable to false and arrays empty.
+                Always respond in the same language as the user's question (Persian or English).
+                """)
+        };
 
-        var jsonResponse = await response.Content.ReadFromJsonAsync<OllamaResponse>();
-        if (string.IsNullOrWhiteSpace(jsonResponse?.Response)) return null;
+        // 3. Append history
+        foreach (var historyMsg in request.History)
+        {
+            var role = historyMsg.Role.Equals("user", StringComparison.OrdinalIgnoreCase)
+                ? ChatRole.User
+                : ChatRole.Assistant;
+            messages.Add(new AiChatMessage(role, historyMsg.Content));
+        }
 
-        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        // 4. Append current user question
+        messages.Add(new AiChatMessage(ChatRole.User, request.Question));
+
+        // 5. Invoke chat client with tools enabled
+        var chatOptions = new ChatOptions
+        {
+            Tools = tools,
+            Temperature = 0.0f
+        };
+
+        var response = await chatClient.GetResponseAsync(messages, chatOptions);
+        var rawResponse = response.Message.Text?.Trim() ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(rawResponse))
+            return null;
+
+        // Clean markdown code blocks if the model wrapped JSON output
+        if (rawResponse.StartsWith("```"))
+        {
+            var firstNewline = rawResponse.IndexOf('\n');
+            var lastBacktick = rawResponse.LastIndexOf("```");
+            if (firstNewline > 0 && lastBacktick > firstNewline)
+            {
+                rawResponse = rawResponse.Substring(firstNewline + 1, lastBacktick - firstNewline - 1).Trim();
+            }
+        }
 
         try
         {
-            var rawResult = JsonSerializer.Deserialize<RawChatResult>(jsonResponse.Response, options);
+            var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var result = JsonSerializer.Deserialize<RawChatResult>(rawResponse, jsonOptions);
 
-            if (rawResult == null) return null;
+            if (result is null) return new DataChatResponse(rawResponse, null);
 
-            var table = rawResult.HasTable
-                ? new DataTable(rawResult.TableColumns, rawResult.TableRows)
+            var table = result.HasTable
+                ? new DataTable(result.TableColumns, result.TableRows)
                 : null;
 
-            return new DataChatResponse(rawResult.TextAnswer, table);
+            return new DataChatResponse(result.TextAnswer, table);
         }
         catch
         {
-            // اگه JSON parse نشد، فقط متن خام رو برگردون
-            return new DataChatResponse(jsonResponse.Response, null);
+            return new DataChatResponse(rawResponse, null);
         }
-    }
-
-    private class OllamaResponse
-    {
-        [JsonPropertyName("response")]
-        public string Response { get; set; } = string.Empty;
     }
 
     private class RawChatResult

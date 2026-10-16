@@ -1,5 +1,6 @@
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
+using JobHunter.AI.Api.Skills;
 using Npgsql;
 using Microsoft.Extensions.AI;
 
@@ -40,6 +41,7 @@ builder.Services.AddScoped<InterviewBankChatService>();
 builder.Services.AddScoped<CareerAdvisorService>();
 builder.Services.AddScoped<ResumeTailorService>();
 builder.Services.AddScoped<SemanticSearchService>();
+builder.Services.AddScoped<ApplicationDataSkills>();
 
 builder.Services.AddSingleton<IChatClient>(sp =>
 {
