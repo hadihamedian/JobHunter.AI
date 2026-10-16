@@ -1,31 +1,26 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 using JobHunter.AI.Api.Models;
+using JobHunter.AI.Api.Skills;
+using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace JobHunter.AI.Api.Services;
 
-public class AiAnalyzerService(HttpClient httpClient, IConfiguration configuration)
+public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationSkills atsSkills)
 {
     public async Task<AnalyzeResult?> AnalyzeAsync(string resume, string jobDesc)
     {
-        // Stage 1: figure out what the job actually asks for — without the resume
-        // anywhere near the prompt, so the model has nothing to blend it with.
+        // Stage 1: Extract requirements from job description
         var requirements = await ExtractRequirementsAsync(jobDesc);
         if (requirements is null || requirements.Count == 0) return null;
 
-        // De-duplicate deterministically in C# — the model is asked not to repeat
-        // itself, but local models don't always follow that reliably, especially
-        // when the job description itself repeats a term (e.g. the same tech
-        // stack item appearing twice in different sentences).
         requirements = requirements
             .GroupBy(r => r.Text.Trim(), StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
 
-        // Stage 2: "skill" requirements are checked with plain, deterministic text
-        // matching in C# — not by asking a small local model, which tends to miss
-        // obvious literal matches once the list/resume gets long. Only "experience"
-        // requirements (which genuinely need date-range reasoning) go to the model.
+        // Stage 2: Deterministic verification via AtsEvaluationSkills
         var matchingSkills = new List<string>();
         var missingSkills = new List<string>();
         var experienceRequirements = new List<RequirementItem>();
@@ -38,69 +33,61 @@ public class AiAnalyzerService(HttpClient httpClient, IConfiguration configurati
                 continue;
             }
 
-            if (ResumeContainsSkill(resume, req.Text))
+            if (atsSkills.CheckSkillPresence(resume, req.Text))
                 matchingSkills.Add(req.Text);
             else
                 missingSkills.Add(req.Text);
         }
 
-        // Stage 3: ask the model ONLY for the parts that genuinely need reasoning —
-        // summing years of experience, scoring, and writing suggestions — using the
-        // already-confirmed skill lists as fixed context it must not override.
+        // Stage 3: LLM reasoning for experience calculation and final score
         return await FinalizeAsync(resume, experienceRequirements, matchingSkills, missingSkills);
     }
 
-    // Stage 1: extract requirements from the job description ONLY, each tagged with
-    // a type so we know HOW to check it later (deterministic keyword match vs.
-    // numeric/date reasoning). Vague, subjective requirements (team spirit, etc.)
-    // are dropped here because no resume text can objectively confirm or deny them.
     private async Task<List<RequirementItem>?> ExtractRequirementsAsync(string jobDesc)
     {
-        var url = configuration["Ollama:Url"] ?? "http://localhost:11434/api/generate";
-        var model = configuration["Ollama:Model"] ?? "llama3.2";
+        var prompt = $$"""
+            Extract job requirements from the text below that can be OBJECTIVELY verified from a resume. For each one, classify it as exactly one of:
+            - "skill": a specific technology, tool, framework, language, or technical skill (e.g. "C#", "SQL Server", "ASP.NET", "Design Patterns").
+            - "experience": a required MINIMUM number of years of experience (a numeric threshold).
 
-        var prompt = $@"Extract job requirements from the text below that can be OBJECTIVELY verified from a resume. For each one, classify it as exactly one of:
-- ""skill"": a specific technology, tool, framework, language, or technical skill (e.g. ""C#"", ""SQL Server"", ""ASP.NET"", ""Design Patterns"").
-- ""experience"": a required MINIMUM number of years of experience (a numeric threshold).
+            Do NOT include vague soft-skill, personality, or attitude requirements (e.g. "team spirit", "problem-solving ability"). Exclude these entirely.
+            Keep every requirement ATOMIC: one single technology/skill per item. If a sentence lists multiple technologies, split them into separate items.
+            Extract EVERY distinct item from any technology list.
+            Write each requirement's "text" as the technology/skill name itself (prefer English names for technologies).
 
-Do NOT include vague soft-skill, personality, or attitude requirements that cannot be reliably checked from resume text (e.g. ""team spirit"", ""problem-solving ability"", ""motivation"", ""creativity"", ""responsibility""). Exclude these entirely — do not output them as either type.
+            Job Description:
+            {{jobDesc}}
 
-IMPORTANT — keep every requirement ATOMIC: one single technology/skill per item. If a sentence lists several technologies together (e.g. ""C# and .NET"", ""SQL Server and Entity Framework"", or the same thing joined by ""و"" in Persian), split it into SEPARATE items — one per technology — instead of returning the whole sentence as one item. Each item's text should ideally be just the technology name itself (e.g. ""C#"", "".NET""), not a full sentence around it.
+            Return ONLY this JSON, no explanation, no markdown fences:
+            {
+              "requirements": [
+                { "text": "<technology or skill name>", "type": "skill" },
+                { "text": "<minimum years requirement>", "type": "experience" }
+              ]
+            }
+            """;
 
-IMPORTANT — completeness: if the job description contains a comma-separated list of technologies (e.g. a ""Tech stack: A, B, C, D"" line), you MUST extract EVERY distinct item from that list — do not skip or stop early partway through a list. If the same technology is mentioned more than once anywhere in the text (e.g. the job title repeated at the end of a list), only include it ONCE in your output — never output the same requirement twice.
-
-The job description may be written in Persian, English, or a mix — read and fully understand it before extracting, regardless of language. Write each requirement's ""text"" as the technology/skill name itself — prefer the common English name for well-known technologies (e.g. "".NET"", ""C#"") even if the surrounding job description sentence was in Persian, since that name is what will be searched for in the resume.
-
-Job Description:
-{jobDesc}
-
-Return ONLY this JSON, no explanation, no markdown fences:
-{{
-  ""requirements"": [
-    {{ ""text"": ""<requirement copied or closely paraphrased from the text above>"", ""type"": ""skill"" }},
-    {{ ""text"": ""<minimum years requirement, exactly as stated>"", ""type"": ""experience"" }}
-  ]
-}}";
-
-        var payload = new
+        var messages = new List<AiChatMessage>
         {
-            model,
-            prompt,
-            stream = false,
-            format = "json",
-            options = new { temperature = 0, num_predict = 800 }
+            new(ChatRole.User, prompt)
         };
 
-        var response = await httpClient.PostAsJsonAsync(url, payload);
-        response.EnsureSuccessStatusCode();
+        var options = new ChatOptions
+        {
+            Temperature = 0.0f
+        };
 
-        var ollamaResponse = await response.Content.ReadFromJsonAsync<OllamaResponse>();
-        if (string.IsNullOrWhiteSpace(ollamaResponse?.Response)) return null;
+        var response = await chatClient.GetResponseAsync(messages, options);
+        var rawText = response.Message.Text?.Trim() ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(rawText)) return null;
+
+        rawText = CleanJsonFences(rawText);
 
         try
         {
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var raw = JsonSerializer.Deserialize<RequirementsExtraction>(ollamaResponse.Response, options);
+            var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var raw = JsonSerializer.Deserialize<RequirementsExtraction>(rawText, jsonOptions);
             return raw?.Requirements;
         }
         catch
@@ -109,126 +96,105 @@ Return ONLY this JSON, no explanation, no markdown fences:
         }
     }
 
-    // Deterministic "does this skill appear in the resume" check. Skill descriptors from
-    // the job description often include parenthetical examples or slashes (e.g.
-    // "API Gateway (Ocelot / YARP)"), so we split into individual candidate tokens and
-    // match ANY of them case-insensitively rather than requiring the full literal phrase.
-    private static bool ResumeContainsSkill(string resume, string skillText)
-    {
-        foreach (var token in ExtractCandidateTokens(skillText))
-        {
-            if (token.Length > 1 && resume.Contains(token, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
-    }
-
-    private static List<string> ExtractCandidateTokens(string skillText)
-    {
-        var parts = skillText
-            .Split(new[] { '(', ')', '/', ',', '&' }, StringSplitOptions.RemoveEmptyEntries)
-            .SelectMany(p => System.Text.RegularExpressions.Regex.Split(p, @"\s+and\s+|\s+و\s+", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-            .Select(p => p.Trim())
-            .Where(p => p.Length > 1)
-            .ToList();
-
-        // Defense-in-depth: also pull out Latin-script technology-looking tokens
-        // (e.g. "C#", ".NET", "ASP.NET") embedded inside a longer non-Latin sentence,
-        // in case the model still returns a compound phrase despite the instruction above.
-        foreach (System.Text.RegularExpressions.Match m in
-                 System.Text.RegularExpressions.Regex.Matches(skillText, @"[A-Za-z][A-Za-z0-9.#+\-]{1,30}"))
-        {
-            if (m.Value.Length > 1) parts.Add(m.Value.Trim());
-        }
-
-        parts.Add(skillText.Trim());
-        return parts.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-    }
-
-    // Stage 3: the model only reasons about years-of-experience thresholds (real
-    // reasoning over dates) and writes the score/suggestions. It is given the
-    // already-confirmed skill lists as fixed facts, not something to re-derive.
     private async Task<AnalyzeResult?> FinalizeAsync(
         string resume,
         List<RequirementItem> experienceRequirements,
         List<string> matchingSkills,
         List<string> missingSkills)
     {
-        var url = configuration["Ollama:Url"] ?? "http://localhost:11434/api/generate";
-        var model = configuration["Ollama:Model"] ?? "llama3.2";
-
         var expList = experienceRequirements.Count > 0
             ? string.Join("\n", experienceRequirements.Select(r => "- " + r.Text))
             : "(none)";
 
-        var prompt = $@"You are finishing an ATS analysis. The skill-matching part is already done by deterministic code — treat it as fact, do not re-evaluate or contradict it.
+        var confirmedPresent = matchingSkills.Count > 0 ? string.Join(", ", matchingSkills) : "(none)";
+        var confirmedAbsent = missingSkills.Count > 0 ? string.Join(", ", missingSkills) : "(none)";
 
-Already confirmed as present in the resume:
-{(matchingSkills.Count > 0 ? string.Join(", ", matchingSkills) : "(none)")}
+        var prompt = $$"""
+            You are finishing an ATS analysis. The skill-matching part is already done by deterministic code — treat it as fact, do not re-evaluate or contradict it.
 
-Already confirmed as absent from the resume:
-{(missingSkills.Count > 0 ? string.Join(", ", missingSkills) : "(none)")}
+            Already confirmed as present in the resume:
+            {{confirmedPresent}}
 
-Experience requirements still to evaluate (minimum years thresholds):
-{expList}
+            Already confirmed as absent from the resume:
+            {{confirmedAbsent}}
 
-Resume (use this ONLY to evaluate the experience requirements above — the skill lists above are already final):
-{resume}
+            Experience requirements still to evaluate (minimum years thresholds):
+            {{expList}}
 
-For each experience requirement: look at ALL job entries in the resume's work history, calculate the duration of each from its start/end dates (e.g. ""Jul 2016 - Jul 2021"" = 5 years), and SUM them to get total professional experience. If the total meets or exceeds the required number, it is met; otherwise it is not met.
+            Resume (use this ONLY to evaluate the experience requirements above):
+            {{resume}}
 
-Return ONLY this JSON, no explanation, no markdown fences:
-{{
-  ""atsScore"": <number 0-100, reflecting the overall match using both the confirmed skill lists and the experience evaluation>,
-  ""experienceMet"": [""<experience requirement text that IS satisfied>""],
-  ""experienceNotMet"": [""<experience requirement text that is NOT satisfied>""],
-  ""criticalMissingSkills"": [""<subset of the confirmed-absent list above, or unmet experience requirements, that are mandatory (not ""nice to have"")>""],
-  ""suggestions"": [""<2-4 concrete improvements based only on the confirmed-absent list and any unmet experience requirements>""]
-}}";
+            For each experience requirement: look at ALL job entries in the resume's work history, calculate the duration of each from start/end dates, and SUM them. If the total meets or exceeds the required number, it is met.
 
-        var payload = new
+            Return ONLY this JSON, no explanation, no markdown fences:
+            {
+              "atsScore": <number 0-100>,
+              "experienceMet": ["<satisfied experience requirement>"],
+              "experienceNotMet": ["<unmet experience requirement>"],
+              "criticalMissingSkills": ["<subset of absent skills or unmet experience that are mandatory>"],
+              "suggestions": ["<2-4 concrete suggestions based on missing items>"]
+            }
+            """;
+
+        var messages = new List<AiChatMessage>
         {
-            model,
-            prompt,
-            stream = false,
-            format = "json",
-            options = new { temperature = 0 }
+            new(ChatRole.User, prompt)
         };
 
-        var response = await httpClient.PostAsJsonAsync(url, payload);
-        response.EnsureSuccessStatusCode();
+        var options = new ChatOptions
+        {
+            Temperature = 0.0f
+        };
 
-        var ollamaResponse = await response.Content.ReadFromJsonAsync<OllamaResponse>();
-        if (string.IsNullOrWhiteSpace(ollamaResponse?.Response)) return null;
+        var response = await chatClient.GetResponseAsync(messages, options);
+        var rawText = response.Message.Text?.Trim() ?? string.Empty;
 
-        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-        var raw = JsonSerializer.Deserialize<FinalizeResult>(ollamaResponse.Response, options);
-        if (raw is null) return null;
+        if (string.IsNullOrWhiteSpace(rawText)) return null;
 
-        // Merge deterministic skill results with the model's experience-requirement
-        // verdicts in C#, so the final lists can never be silently altered by the model.
-        var finalMatching = matchingSkills.Concat(raw.ExperienceMet).ToList();
-        var finalMissing = missingSkills.Concat(raw.ExperienceNotMet).ToList();
+        rawText = CleanJsonFences(rawText);
 
-        return new AnalyzeResult(
-            raw.AtsScore,
-            finalMatching,
-            finalMissing,
-            raw.CriticalMissingSkills,
-            raw.Suggestions
-        );
+        try
+        {
+            var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var raw = JsonSerializer.Deserialize<FinalizeResult>(rawText, jsonOptions);
+            if (raw is null) return null;
+
+            var finalMatching = matchingSkills.Concat(raw.ExperienceMet).ToList();
+            var finalMissing = missingSkills.Concat(raw.ExperienceNotMet).ToList();
+
+            return new AnalyzeResult(
+                raw.AtsScore,
+                finalMatching,
+                finalMissing,
+                raw.CriticalMissingSkills,
+                raw.Suggestions
+            );
+        }
+        catch
+        {
+            return null;
+        }
     }
 
-    private class OllamaResponse
+    private static string CleanJsonFences(string text)
     {
-        [JsonPropertyName("response")]
-        public string Response { get; set; } = string.Empty;
+        var cleaned = text.Trim();
+        if (cleaned.StartsWith("```"))
+        {
+            var firstNewline = cleaned.IndexOf('\n');
+            var lastBacktick = cleaned.LastIndexOf("```");
+            if (firstNewline > 0 && lastBacktick > firstNewline)
+            {
+                cleaned = cleaned.Substring(firstNewline + 1, lastBacktick - firstNewline - 1).Trim();
+            }
+        }
+        return cleaned;
     }
 
     private class RequirementItem
     {
         public string Text { get; set; } = string.Empty;
-        public string Type { get; set; } = "skill"; // "skill" | "experience"
+        public string Type { get; set; } = "skill";
     }
 
     private class RequirementsExtraction
