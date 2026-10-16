@@ -154,7 +154,7 @@ else
 							</a>
 						}
 					</td>
-					<td class="src">@(app.ResumeVersion ?? "—")</td>
+					<td class="src">@(app.ResumeName ?? "—")</td>
 					<td class="dt">@(app.AppliedAt?.ToString("MMM d") ?? app.CreatedAt.ToString("MMM d"))</td>
 					<td><span class="chip @GetStatusClass(app.Status)">@GetStatusLabel(app.Status)</span></td>
 					<td>
