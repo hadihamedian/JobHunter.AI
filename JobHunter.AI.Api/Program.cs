@@ -1,6 +1,7 @@
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 using Npgsql;
+using Microsoft.Extensions.AI;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,6 +23,9 @@ builder.Services.AddCors(options =>
             .AllowAnyMethod());
 });
 
+var ollamaEndpoint = builder.Configuration["Ollama:Endpoint"] ?? "http://localhost:11434";
+var ollamaModel = builder.Configuration["Ollama:Model"] ?? "llama3.2:latest";
+
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
                        ?? "Host=localhost;Database=jobassistant;Username=postgres;Password=postgres";
 var dataSource = NpgsqlDataSource.Create(connectionString);
@@ -36,6 +40,15 @@ builder.Services.AddScoped<InterviewBankChatService>();
 builder.Services.AddScoped<CareerAdvisorService>();
 builder.Services.AddScoped<ResumeTailorService>();
 builder.Services.AddScoped<SemanticSearchService>();
+
+builder.Services.AddSingleton<IChatClient>(sp =>
+{
+    var rawClient = new OllamaChatClient(new Uri(ollamaEndpoint), ollamaModel);
+
+    return new ChatClientBuilder(rawClient)
+        .UseFunctionInvocation() // Automatically executes C# methods when requested by LLM
+        .Build();
+});
 
 var app = builder.Build();
 app.UseRouting();
