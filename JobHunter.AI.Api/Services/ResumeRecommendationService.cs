@@ -1,94 +1,146 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 using JobHunter.AI.Api.Models;
+using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace JobHunter.AI.Api.Services;
 
 public class ResumeRecommendationService(
-    HttpClient httpClient,
-    IConfiguration configuration,
-    ResumeRepository resumeRepository)
+    IChatClient chatClient,
+    ResumeRepository resumeRepository,
+    ILogger<ResumeRecommendationService> logger)
 {
     public async Task<ResumeRecommendation?> RecommendAsync(string jobDescription)
     {
         var resumes = await resumeRepository.GetAllWithContentAsync();
-        if (resumes.Count == 0) return null;
-
-        var ollamaUrl = configuration["Ollama:Url"] ?? "http://localhost:11434/api/generate";
-        var model = configuration["Ollama:Model"] ?? "llama3.2";
+        if (resumes.Count == 0)
+        {
+            logger.LogWarning("No resumes found in database to evaluate.");
+            return null;
+        }
 
         var resumeList = string.Join("\n\n", resumes.Select((r, i) =>
             $"RESUME {i + 1} — ID: {r.Id} — Name: {r.Name}\n{r.Content}"));
 
-        var prompt = $@"You are a resume matching expert.
+        var prompt = $$"""
+            You are a resume matching expert.
+            The candidate has the following resumes:
 
-The candidate has these resumes:
+            {{resumeList}}
 
-{resumeList}
+            Job Description:
+            {{jobDescription}}
 
-Job Description:
-{jobDescription}
+            Compare each resume against the job description.
+            Return ONLY a valid JSON object matching this schema:
+            {
+               "bestResumeId": "<exact id from above>",
+               "bestResumeName": "<exact name from above>",
+               "bestScore": <number 0-100>,
+               "reasoning": "<2-3 sentences explaining why this resume is best>",
+               "allScores": [
+                 { "resumeId": "<exact id from above>", "resumeName": "<exact name from above>", "score": <number 0-100> }
+               ]
+            }
 
-Compare each resume against the job description.
-Return ONLY this JSON object, no explanation, no markdown:
-{{
-   ""bestResumeId"": ""<uuid of best resume>"",
-   ""bestResumeName"": ""<name of best resume>"",
-   ""bestScore"": <0-100>,
-   ""reasoning"": ""<2-3 sentences explaining why this resume is best and what it has that others don't>"",
-   ""allScores"": [
-    {{ ""resumeId"": ""<uuid>"", ""resumeName"": ""<name>"", ""score"": <0-100> }}
-  ]
-}}
+            allScores must include ALL candidate resumes sorted by score descending.
+            """;
 
-Score based on: keyword match, relevant experience, skills alignment.
-allScores must include ALL resumes sorted by score descending.";
-
-        var payload = new
+        var messages = new List<AiChatMessage>
         {
-            model,
-            prompt,
-            stream = false,
-            format = "json",
-            options = new { temperature = 0 }
+            new(ChatRole.User, prompt)
         };
 
-        var response = await httpClient.PostAsJsonAsync(ollamaUrl, payload);
-        response.EnsureSuccessStatusCode();
-
-        var ollamaResponse = await response.Content.ReadFromJsonAsync<OllamaResponse>();
-        if (string.IsNullOrWhiteSpace(ollamaResponse?.Response)) return null;
+        var options = new ChatOptions
+        {
+            Temperature = 0.0f,
+            ResponseFormat = ChatResponseFormat.Json
+        };
 
         try
         {
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var raw = JsonSerializer.Deserialize<RawRecommendation>(ollamaResponse.Response, options);
-            if (raw == null) return null;
+            var response = await chatClient.GetResponseAsync(messages, options);
+            var rawText = response.Message.Text?.Trim() ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(rawText))
+            {
+                logger.LogWarning("LLM returned empty response for resume recommendation.");
+                return null;
+            }
+
+            rawText = CleanJsonFences(rawText);
+
+            var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var raw = JsonSerializer.Deserialize<RawRecommendation>(rawText, jsonOptions);
+            if (raw is null)
+            {
+                logger.LogWarning("Failed to deserialize LLM response: {RawText}", rawText);
+                return null;
+            }
+
+            // Safe deterministic ID mapping: Match IDs to real database records
+            var resolvedScores = new List<ResumeScore>();
+            foreach (var s in raw.AllScores)
+            {
+                var matched = resumes.FirstOrDefault(r => 
+                    r.Id.ToString().Equals(s.ResumeId, StringComparison.OrdinalIgnoreCase) ||
+                    r.Name.Equals(s.ResumeName, StringComparison.OrdinalIgnoreCase));
+
+                var realId = matched?.Id ?? (Guid.TryParse(s.ResumeId, out var parsedGuid) ? parsedGuid : resumes.First().Id);
+                var realName = matched?.Name ?? s.ResumeName;
+
+                resolvedScores.Add(new ResumeScore(realId, realName, s.Score));
+            }
+
+            // Resolve best resume ID
+            var bestMatched = resumes.FirstOrDefault(r =>
+                r.Id.ToString().Equals(raw.BestResumeId, StringComparison.OrdinalIgnoreCase) ||
+                r.Name.Equals(raw.BestResumeName, StringComparison.OrdinalIgnoreCase)) 
+                ?? resolvedScores.OrderByDescending(s => s.Score).Select(s => resumes.First(r => r.Id == s.ResumeId)).FirstOrDefault()
+                ?? resumes.First();
 
             return new ResumeRecommendation(
-                raw.BestResumeId,
-                raw.BestResumeName,
+                bestMatched.Id,
+                bestMatched.Name,
                 raw.BestScore,
                 raw.Reasoning,
-                raw.AllScores.Select(s =>
-                    new ResumeScore(s.ResumeId, s.ResumeName, s.Score)).ToList()
+                resolvedScores.OrderByDescending(s => s.Score).ToList()
             );
         }
-        catch
+        catch (Exception ex)
         {
+            logger.LogError(ex, "Error occurred during resume recommendation.");
             return null;
         }
     }
 
-    private class OllamaResponse
+    private static string CleanJsonFences(string text)
     {
-        [JsonPropertyName("response")]
-        public string Response { get; set; } = string.Empty;
+        var cleaned = text.Trim();
+        if (cleaned.StartsWith("```"))
+        {
+            var firstNewline = cleaned.IndexOf('\n');
+            var lastBacktick = cleaned.LastIndexOf("```");
+            if (firstNewline > 0 && lastBacktick > firstNewline)
+            {
+                cleaned = cleaned.Substring(firstNewline + 1, lastBacktick - firstNewline - 1).Trim();
+            }
+        }
+
+        var openBrace = cleaned.IndexOf('{');
+        var closeBrace = cleaned.LastIndexOf('}');
+        if (openBrace >= 0 && closeBrace > openBrace)
+        {
+            cleaned = cleaned.Substring(openBrace, closeBrace - openBrace + 1);
+        }
+
+        return cleaned;
     }
 
     private class RawRecommendation
     {
-        public Guid BestResumeId { get; set; }
+        public string BestResumeId { get; set; } = string.Empty;
         public string BestResumeName { get; set; } = string.Empty;
         public int BestScore { get; set; }
         public string Reasoning { get; set; } = string.Empty;
@@ -97,7 +149,7 @@ allScores must include ALL resumes sorted by score descending.";
 
     private class RawScore
     {
-        public Guid ResumeId { get; set; }
+        public string ResumeId { get; set; } = string.Empty;
         public string ResumeName { get; set; } = string.Empty;
         public int Score { get; set; }
     }

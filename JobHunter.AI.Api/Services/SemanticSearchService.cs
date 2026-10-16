@@ -1,10 +1,14 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 using JobHunter.AI.Api.Models;
+using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace JobHunter.AI.Api.Services;
 
-public class SemanticSearchService(HttpClient httpClient, IConfiguration configuration, ApplicationRepository repository)
+public class SemanticSearchService(
+    IChatClient chatClient,
+    ApplicationRepository repository)
 {
     public async Task<SemanticSearchResponse?> SearchAsync(string query)
     {
@@ -12,7 +16,6 @@ public class SemanticSearchService(HttpClient httpClient, IConfiguration configu
         if (applications.Count == 0)
             return new SemanticSearchResponse(new List<Guid>(), "No applications yet.");
 
-        // فقط فیلدهای لازم رو می‌فرستیم، Notes رو هم کوتاه می‌کنیم تا پرامپت سنگین نشه
         var compact = applications.Select(a => new
         {
             id = a.Id,
@@ -24,56 +27,55 @@ public class SemanticSearchService(HttpClient httpClient, IConfiguration configu
             appliedAt = a.AppliedAt?.ToString("yyyy-MM-dd"),
             notes = string.IsNullOrWhiteSpace(a.Notes) ? null : (a.Notes.Length > 200 ? a.Notes[..200] : a.Notes)
         });
-        var appsJson = JsonSerializer.Serialize(compact, new JsonSerializerOptions { WriteIndented = true });
 
-        var url = configuration["Ollama:Url"] ?? "http://localhost:11434/api/generate";
-        var model = configuration["Ollama:Model"] ?? "llama3.2";
+        var appsJson = JsonSerializer.Serialize(compact, new JsonSerializerOptions { WriteIndented = false });
         var today = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd");
 
-        var prompt = $@"You are a semantic search assistant for a job application tracker.
-Below is the user's full list of job applications as JSON. Each item has an ""id"" field.
-{appsJson}
+        var prompt = $$"""
+            You are a semantic search engine for a job application tracker.
+            Below is the user's full list of job applications:
+            {{appsJson}}
 
-Today's date is {today}.
+            Today's date is {{today}}.
+            User search query: "{{query}}"
 
-The user typed this search query (Persian or English, could be a natural-language description, not an exact keyword):
-""{query}""
+            Match applications matching the user's intent. Consider status, dates, notes, and metrics.
+            You MUST respond ONLY in valid JSON matching this schema:
+            {
+              "matchingIds": ["<guid1>", "<guid2>"],
+              "explanation": "<short 1-sentence explanation of the match in the user's language>"
+            }
 
-Decide which applications from the list above match the user's intent. Consider status, source, applied date, ATS score, and notes.
-You MUST respond with ONLY a JSON object in this exact format:
-{{
-  ""matchingIds"": [""id1"", ""id2""],
-  ""explanation"": ""short 1-sentence explanation of what you matched on, in the same language as the query""
-}}
+            Rules:
+            - Only include "id" values present in the input list.
+            - If nothing matches, return empty matchingIds.
+            """;
 
-Rules:
-- Only use ""id"" values that appear in the list above. Never invent an id.
-- If nothing matches, return an empty matchingIds array with a short explanation.
-- Do not include any text outside the JSON object.";
-
-        var requestPayload = new
+        var messages = new List<AiChatMessage>
         {
-            model,
-            prompt,
-            stream = false,
-            format = "json",
-            options = new { temperature = 0 }
+            new(ChatRole.User, prompt)
         };
 
-        var response = await httpClient.PostAsJsonAsync(url, requestPayload);
-        response.EnsureSuccessStatusCode();
-
-        var jsonResponse = await response.Content.ReadFromJsonAsync<OllamaResponse>();
-        if (string.IsNullOrWhiteSpace(jsonResponse?.Response)) return null;
-
-        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var options = new ChatOptions
+        {
+            Temperature = 0.0f,
+            ResponseFormat = ChatResponseFormat.Json
+        };
 
         try
         {
-            var raw = JsonSerializer.Deserialize<RawSemanticResult>(jsonResponse.Response, options);
-            if (raw == null) return null;
+            var response = await chatClient.GetResponseAsync(messages, options);
+            var rawText = response.Message.Text?.Trim() ?? string.Empty;
 
-            // لایه‌ی دیترمینیستیک: فقط IDهایی که واقعاً وجود دارن قبول می‌شن، مدل نمی‌تونه چیزی اختراع کنه
+            if (string.IsNullOrWhiteSpace(rawText)) return null;
+
+            rawText = CleanJsonFences(rawText);
+
+            var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var raw = JsonSerializer.Deserialize<RawSemanticResult>(rawText, jsonOptions);
+            if (raw is null) return null;
+
+            // Deterministic validation: only accept real IDs from database
             var validIds = applications.Select(a => a.Id).ToHashSet();
             var safeIds = raw.MatchingIds
                 .Where(idStr => Guid.TryParse(idStr, out _))
@@ -89,10 +91,27 @@ Rules:
         }
     }
 
-    private class OllamaResponse
+    private static string CleanJsonFences(string text)
     {
-        [JsonPropertyName("response")]
-        public string Response { get; set; } = string.Empty;
+        var cleaned = text.Trim();
+        if (cleaned.StartsWith("```"))
+        {
+            var firstNewline = cleaned.IndexOf('\n');
+            var lastBacktick = cleaned.LastIndexOf("```");
+            if (firstNewline > 0 && lastBacktick > firstNewline)
+            {
+                cleaned = cleaned.Substring(firstNewline + 1, lastBacktick - firstNewline - 1).Trim();
+            }
+        }
+
+        var openBrace = cleaned.IndexOf('{');
+        var closeBrace = cleaned.LastIndexOf('}');
+        if (openBrace >= 0 && closeBrace > openBrace)
+        {
+            cleaned = cleaned.Substring(openBrace, closeBrace - openBrace + 1);
+        }
+
+        return cleaned;
     }
 
     private class RawSemanticResult
