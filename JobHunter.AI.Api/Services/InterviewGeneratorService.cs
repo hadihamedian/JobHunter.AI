@@ -1,151 +1,118 @@
 ﻿using System.Text.Json;
-using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 using JobHunter.AI.Api.Models;
+using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace JobHunter.AI.Api.Services;
 
 public class InterviewGeneratorService(
-    HttpClient httpClient,
-    IConfiguration configuration,
+    IChatClient chatClient,
     InterviewRepository repository,
     ILogger<InterviewGeneratorService> logger)
 {
-    public async Task<List<InterviewQuestion>> GenerateAsync(
-        GenerateQuestionsRequest req)
+    public async Task<List<InterviewQuestion>> GenerateAsync(GenerateQuestionsRequest req)
     {
-        var ollamaUrl = configuration["Ollama:Url"]
-            ?? "http://localhost:11434/api/generate";
-        var model = configuration["Ollama:Model"] ?? "llama3.2";
+        var prompt = $$"""
+                       You are an expert technical interviewer.
+                       Generate interview questions based on the job description and resume provided.
 
-        var prompt = $@"You are an expert technical interviewer.
+                       Job Description:
+                       {{req.JobDescription}}
 
-Based on this job description and resume, generate interview questions.
+                       Resume:
+                       {{req.ResumeContent}}
 
-Job Description:
-{req.JobDescription}
+                       Generate exactly 10 questions with this distribution:
+                       - 5 Technical questions (specific to the tech stack)
+                       - 3 Behavioral questions (STAR format situations)
+                       - 2 Questions the candidate should ask the interviewer
 
-Resume:
-{req.ResumeContent}
+                       You MUST respond with a JSON object containing a "questions" array. No explanations, no markdown fences.
+                       Type must be exactly one of: "Technical", "Behavioral", "AskThem".
+                       The "hint" field MUST contain 2-4 concrete technical keywords or talking points to help answer (do not use generic placeholder text).
 
-Generate exactly 10 questions in this mix:
-- 5 Technical questions (specific to the tech stack in the job)
-- 3 Behavioral questions (STAR format situations)
-- 2 Questions the candidate should ask the interviewer
+                       {
+                         "questions": [
+                           {
+                             "question": "Can you explain the differences between EF Core and Dapper?",
+                             "type": "Technical",
+                             "hint": "Performance, change tracking overhead, micro-ORM vs full ORM, raw SQL control"
+                           }
+                         ]
+                       }
+                       """;
 
-Return ONLY a JSON array, no explanation, no markdown, no code blocks.
-Each item must have: question, type, hint.
-Type must be exactly one of: Technical, Behavioral, AskThem.
-
-[
-  {{""question"": ""..."", ""type"": ""Technical"", ""hint"": ""...""}},
-  ...
-]";
-
-        var payload = new
+        var messages = new List<AiChatMessage>
         {
-            model,
-            prompt,
-            stream = false,
-            options = new { temperature = 0.4 }
+            new(ChatRole.User, prompt)
+        };
+
+        var options = new ChatOptions
+        {
+            Temperature = 0.2f,
+            ResponseFormat = ChatResponseFormat.Json
         };
 
         try
         {
-            var response = await httpClient.PostAsJsonAsync(ollamaUrl, payload);
-            response.EnsureSuccessStatusCode();
+            var response = await chatClient.GetResponseAsync(messages, options);
+            var rawText = response.Message.Text?.Trim() ?? string.Empty;
 
-            var ollamaResp = await response.Content
-                .ReadFromJsonAsync<OllamaResponse>();
-
-            if (string.IsNullOrWhiteSpace(ollamaResp?.Response))
+            if (string.IsNullOrWhiteSpace(rawText))
             {
-                logger.LogWarning("Ollama returned empty response");
+                logger.LogWarning("LLM returned empty response for interview generation.");
                 return new();
             }
 
-            logger.LogInformation("Ollama response length: {Length}",
-                ollamaResp.Response.Length);
-            logger.LogDebug("Raw response: {Response}",
-                ollamaResp.Response.Substring(0, Math.Min(500, ollamaResp.Response.Length)));
+            rawText = CleanJsonFences(rawText);
 
-            // Strip markdown code blocks if present
-            var rawText = ollamaResp.Response.Trim();
-            if (rawText.StartsWith("```"))
-            {
-                var firstNewline = rawText.IndexOf('\n');
-                var lastBacktick = rawText.LastIndexOf("```");
-                if (firstNewline > 0 && lastBacktick > firstNewline)
-                {
-                    rawText = rawText.Substring(firstNewline + 1,
-                        lastBacktick - firstNewline - 1).Trim();
-                }
-            }
-
-            var jsonOptions = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            };
-
+            var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             List<RawQuestion>? raw = null;
 
-            // Try 1: Direct array
+            // Strategy 1: Parse as Object with "questions", "items", or "data" array
             try
             {
-                raw = JsonSerializer.Deserialize<List<RawQuestion>>(rawText, jsonOptions);
-                logger.LogInformation("Parsed as direct array, count: {Count}", raw?.Count ?? 0);
+                var wrapper = JsonSerializer.Deserialize<QuestionWrapper>(rawText, jsonOptions);
+                raw = wrapper?.Questions ?? wrapper?.Items ?? wrapper?.Data;
             }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Failed to parse as direct array");
-            }
+            catch { /* proceed to next strategy */ }
 
-            // Try 2: Wrapper object with "questions" or "items" key
-            if (raw == null || raw.Count == 0)
+            // Strategy 2: Direct Array parse
+            if (raw is null || raw.Count == 0)
             {
                 try
                 {
-                    var wrapper = JsonSerializer.Deserialize<QuestionWrapper>(rawText, jsonOptions);
-                    raw = wrapper?.Questions ?? wrapper?.Items;
-                    logger.LogInformation("Parsed as wrapper, count: {Count}", raw?.Count ?? 0);
+                    raw = JsonSerializer.Deserialize<List<RawQuestion>>(rawText, jsonOptions);
                 }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex, "Failed to parse as wrapper");
-                }
+                catch { /* proceed to next strategy */ }
             }
 
-            // Try 3: Wrapper with "data" key
-            if (raw == null || raw.Count == 0)
+            // Strategy 3: Single Object parse (the error case you encountered)
+            if (raw is null || raw.Count == 0)
             {
                 try
                 {
-                    using var doc = JsonDocument.Parse(rawText);
-                    if (doc.RootElement.TryGetProperty("data", out var dataEl))
+                    var single = JsonSerializer.Deserialize<RawQuestion>(rawText, jsonOptions);
+                    if (single is not null && !string.IsNullOrWhiteSpace(single.Question))
                     {
-                        raw = JsonSerializer.Deserialize<List<RawQuestion>>(
-                            dataEl.GetRawText(), jsonOptions);
-                        logger.LogInformation("Parsed from 'data' key, count: {Count}", raw?.Count ?? 0);
+                        raw = [single];
                     }
                 }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex, "Failed to parse from 'data' key");
-                }
+                catch { /* all strategies exhausted */ }
             }
 
-            if (raw == null || raw.Count == 0)
+            if (raw is null || raw.Count == 0)
             {
-                logger.LogError("Failed to parse any questions from response");
+                logger.LogError("Failed to parse any interview questions from payload: {Raw}", rawText);
                 return new();
             }
 
-            // Delete old questions before saving new ones
             await repository.DeleteByApplicationAsync(req.ApplicationId);
 
             var toSave = raw.Select(q => (
                 q.Question,
                 q.Type ?? "Technical",
-                q.Hint ?? ""
+                q.Hint ?? string.Empty
             )).ToList();
 
             await repository.SaveQuestionsAsync(req.ApplicationId, toSave);
@@ -153,15 +120,32 @@ Type must be exactly one of: Technical, Behavioral, AskThem.
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Error in GenerateAsync");
+            logger.LogError(ex, "Error occurred during interview question generation.");
             return new();
         }
     }
 
-    private class OllamaResponse
+    private static string CleanJsonFences(string text)
     {
-        [JsonPropertyName("response")]
-        public string Response { get; set; } = string.Empty;
+        var cleaned = text.Trim();
+        if (cleaned.StartsWith("```"))
+        {
+            var firstNewline = cleaned.IndexOf('\n');
+            var lastBacktick = cleaned.LastIndexOf("```");
+            if (firstNewline > 0 && lastBacktick > firstNewline)
+            {
+                cleaned = cleaned.Substring(firstNewline + 1, lastBacktick - firstNewline - 1).Trim();
+            }
+        }
+
+        var openBrace = cleaned.IndexOfAny(['{', '[']);
+        var closeBrace = cleaned.LastIndexOfAny(['}', ']']);
+        if (openBrace >= 0 && closeBrace > openBrace)
+        {
+            cleaned = cleaned.Substring(openBrace, closeBrace - openBrace + 1);
+        }
+
+        return cleaned;
     }
 
     private class RawQuestion

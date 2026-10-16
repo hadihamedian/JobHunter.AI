@@ -43,6 +43,7 @@ builder.Services.AddScoped<ResumeTailorService>();
 builder.Services.AddScoped<SemanticSearchService>();
 builder.Services.AddScoped<ApplicationDataSkills>();
 builder.Services.AddScoped<AtsEvaluationSkills>();
+builder.Services.AddScoped<InterviewBankSkills>();
 
 builder.Services.AddSingleton<IChatClient>(sp =>
 {

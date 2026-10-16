@@ -1,109 +1,144 @@
 ﻿using System.Text.Json;
-using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 using JobHunter.AI.Api.Models;
+using JobHunter.AI.Api.Skills;
+using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace JobHunter.AI.Api.Services;
 
 public class InterviewBankChatService(
-    HttpClient httpClient,
-    IConfiguration configuration,
+    IChatClient chatClient,
+    InterviewBankSkills skills,
     InterviewRepository repository)
 {
-    public async Task<InterviewBankChatResponse> ChatAsync(
-        InterviewBankChatRequest request)
+    public async Task<InterviewBankChatResponse> ChatAsync(InterviewBankChatRequest request)
     {
         var allQuestions = await repository.GetAllAsync();
 
-        var questionsJson = JsonSerializer.Serialize(
-            allQuestions.Select(q => new
-            {
-                q.Id,
-                q.Question,
-                q.QuestionType,
-                q.Hint,
-                q.Status,
-                q.PersonalNote
-            }),
-            new JsonSerializerOptions { WriteIndented = false });
-
-        var ollamaUrl = configuration["Ollama:Url"]
-            ?? "http://localhost:11434/api/generate";
-        var model = configuration["Ollama:Model"] ?? "llama3.2";
-
-        var historyText = string.Join("\n", request.History
-            .Select(h => $"{h.Role}: {h.Content}"));
-
-        var prompt = $@"You are an interview preparation assistant.
-
-The user has this bank of interview questions:
-{questionsJson}
-
-{(string.IsNullOrEmpty(historyText) ? "" : $"Previous conversation:\n{historyText}\n")}
-User question: {request.Question}
-
-Answer the user's question about their interview questions.
-You can filter, group, explain, or suggest practice strategies.
-
-Return ONLY this JSON object:
-{{
-   ""textAnswer"": ""<your answer, 2-4 sentences>"",
-   ""hasFilteredList"": true or false,
-   ""filteredQuestionIds"": [""<uuid>"", ""<uuid>""]
-}}
-
-If the user asks to see specific questions (by topic, type, status), 
-set hasFilteredList to true and include the IDs of matching questions.
-Otherwise set hasFilteredList to false and filteredQuestionIds to empty array.
-Always answer in the same language the user writes in.";
-
-        var payload = new
+        var tools = new List<AITool>
         {
-            model,
-            prompt,
-            stream = false,
-            format = "json",
-            options = new { temperature = 0.2 }
+            AIFunctionFactory.Create(skills.SearchQuestionsAsync),
+            AIFunctionFactory.Create(skills.GetAllQuestionsAsync)
         };
 
-        var response = await httpClient.PostAsJsonAsync(ollamaUrl, payload);
-        response.EnsureSuccessStatusCode();
+        var messages = new List<AiChatMessage>
+        {
+            new(ChatRole.System, """
+                You are an interview question bank manager.
+                Your task is to find and return question IDs from the user's database.
 
-        var ollamaResp = await response.Content
-            .ReadFromJsonAsync<OllamaResponse>();
-        if (string.IsNullOrWhiteSpace(ollamaResp?.Response))
-            return new InterviewBankChatResponse("No response from AI.", null);
+                RULES:
+                1. NEVER define or explain technologies (never write paragraphs like "EF Core is...").
+                2. If the user asks for questions on a topic, call SearchQuestionsAsync.
+                3. If the user asks for more questions than exist in the bank, clearly state: "Your bank only has X question(s) for this topic."
+                4. Output MUST be valid JSON only.
+
+                JSON format:
+                {
+                   "textAnswer": "<1 short sentence stating how many questions exist in the bank>",
+                   "hasFilteredList": true,
+                   "filteredQuestionIds": ["<guid>"]
+                }
+                """)
+        };
+
+        foreach (var historyMsg in request.History)
+        {
+            var role = historyMsg.Role.Equals("user", StringComparison.OrdinalIgnoreCase)
+                ? ChatRole.User
+                : ChatRole.Assistant;
+            messages.Add(new AiChatMessage(role, historyMsg.Content));
+        }
+
+        messages.Add(new AiChatMessage(ChatRole.User, request.Question));
+
+        var options = new ChatOptions
+        {
+            Tools = tools,
+            Temperature = 0.0f,
+            ResponseFormat = ChatResponseFormat.Json
+        };
 
         try
         {
-            var jsonOptions = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            };
-            var raw = JsonSerializer.Deserialize<RawChatResult>(
-                ollamaResp.Response, jsonOptions);
-            if (raw == null)
-                return new InterviewBankChatResponse(ollamaResp.Response, null);
+            var response = await chatClient.GetResponseAsync(messages, options);
+            var rawText = response.Message.Text?.Trim() ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(rawText))
+                return new InterviewBankChatResponse("No response from AI.", null);
+
+            rawText = CleanJsonFences(rawText);
+
+            var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var raw = JsonSerializer.Deserialize<RawChatResult>(rawText, jsonOptions);
+
+            if (raw is null)
+                return new InterviewBankChatResponse("Could not parse AI response.", null);
 
             List<InterviewQuestion>? filtered = null;
             if (raw.HasFilteredList && raw.FilteredQuestionIds.Count > 0)
             {
-                filtered = allQuestions
-                    .Where(q => raw.FilteredQuestionIds.Contains(q.Id))
-                    .ToList();
+                var idSet = raw.FilteredQuestionIds.ToHashSet();
+                filtered = allQuestions.Where(q => idSet.Contains(q.Id)).ToList();
+            }
+
+            // Fallback & Guardrail: Ensure deterministic matching for topic requests
+            if (filtered is null || filtered.Count == 0)
+            {
+                var searchToken = ExtractSearchToken(request.Question);
+                if (!string.IsNullOrEmpty(searchToken))
+                {
+                    filtered = allQuestions.Where(q => 
+                        q.Question.Contains(searchToken, StringComparison.OrdinalIgnoreCase) || 
+                        (q.Hint != null && q.Hint.Contains(searchToken, StringComparison.OrdinalIgnoreCase))
+                    ).ToList();
+                }
+            }
+
+            // Guardrail: Intercept essay-style explanations and replace with clean count statement
+            if (raw.TextAnswer.Length > 150 || raw.TextAnswer.Contains("Object-Relational", StringComparison.OrdinalIgnoreCase))
+            {
+                var count = filtered?.Count ?? 0;
+                raw.TextAnswer = count > 0 
+                    ? $"Your bank currently contains {count} question(s) for this topic:"
+                    : "No matching questions were found in your bank for this topic.";
             }
 
             return new InterviewBankChatResponse(raw.TextAnswer, filtered);
         }
         catch
         {
-            return new InterviewBankChatResponse(ollamaResp.Response, null);
+            return new InterviewBankChatResponse("Error connecting to AI.", null);
         }
     }
 
-    private class OllamaResponse
+    private static string ExtractSearchToken(string query)
     {
-        [JsonPropertyName("response")]
-        public string Response { get; set; } = string.Empty;
+        var candidates = new[] { "EF Core", "Entity Framework", "SQL", "Docker", "RabbitMQ", "Microservices", "Behavioral", "C#" };
+        return candidates.FirstOrDefault(c => query.Contains(c, StringComparison.OrdinalIgnoreCase)) ?? string.Empty;
+    }
+
+    private static string CleanJsonFences(string text)
+    {
+        var cleaned = text.Trim();
+        if (cleaned.StartsWith("```"))
+        {
+            var firstNewline = cleaned.IndexOf('\n');
+            var lastBacktick = cleaned.LastIndexOf("```");
+            if (firstNewline > 0 && lastBacktick > firstNewline)
+            {
+                cleaned = cleaned.Substring(firstNewline + 1, lastBacktick - firstNewline - 1).Trim();
+            }
+        }
+
+        var openBrace = cleaned.IndexOf('{');
+        var closeBrace = cleaned.LastIndexOf('}');
+        if (openBrace >= 0 && closeBrace > openBrace)
+        {
+            cleaned = cleaned.Substring(openBrace, closeBrace - openBrace + 1);
+        }
+
+        return cleaned;
     }
 
     private class RawChatResult

@@ -180,24 +180,36 @@ else
                 else
                 {
                     <div class="chat-msg-ai">
-                        <div class="chat-msg-ai-text">@msg.TextContent</div>
-                        @if (msg.FilteredQuestions != null && msg.FilteredQuestions.Count > 0)
-                        {
-                            <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
-                                @foreach (var q in msg.FilteredQuestions)
-                                {
-                                    <div class="chat-mini-result">
-                                        <span class="question-type-badge qtype-@q.QuestionType.ToLower()"
-                                              style="font-size:9px;padding:1px 6px">
+                        <div class="chat-msg-ai-text">
+                            <div style="margin-bottom:8px;font-weight:500;">@msg.TextContent</div>
+
+                            @if (msg.FilteredQuestions != null && msg.FilteredQuestions.Count > 0)
+                            {
+                                <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
+                                    @foreach (var q in msg.FilteredQuestions)
+                                    {
+                                        <div
+                                            style="background:#111116;border:0.5px solid #2a2a35;border-radius:6px;padding:10px 12px;">
+                                            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                                        <span class="question-type-badge qtype-@q.QuestionType.ToLower()">
                                             @GetTypeLabel(q.QuestionType)
                                         </span>
-                                        <span style="font-size:12px;color:#c8c8cc;margin-left:6px">
-                                            @q.Question
-                                        </span>
-                                    </div>
-                                }
-                            </div>
-                        }
+                                                <span
+                                                    style="font-size:11px;color:#8a8a95;margin-left:auto;">@q.Status</span>
+                                            </div>
+                                            <div style="font-size:13px;color:#e8e8ea;line-height:1.5;">@q.Question</div>
+                                            @if (!string.IsNullOrEmpty(q.Hint))
+                                            {
+                                                <div
+                                                    style="font-size:11px;color:#8a8a95;margin-top:6px;padding-top:4px;border-top:0.5px solid #1a1a24;">
+                                                    💡 @q.Hint
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
                     </div>
                 }
             }
