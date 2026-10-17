@@ -28,8 +28,9 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Docker
       - ASPNETCORE_URLS=http://+:8080
+      - Ollama__Endpoint=http://host.docker.internal:11434
       - Ollama__Url=http://host.docker.internal:11434/api/generate
-      - Ollama__Model=llama3.1:8b
+      - Ollama__Model=llama3.2:latest
       - ConnectionStrings__DefaultConnection=Host=postgres;Database=jobassistant;Username=postgres;Password=postgres
     ports:
       - "5065:8080"
@@ -38,7 +39,6 @@ services:
         condition: service_healthy
     networks:
       - jobhunter-network
-    # for accessing ollama on linux host
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -57,30 +57,8 @@ services:
       - jobhunter-network
     restart: unless-stopped
 
-  # ---------- Ollama (if you don't want to run on host) ----------
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: jobhunter-ollama
-  #   ports:
-  #     - "11434:11414"
-  #   volumes:
-  #     - ollama_data:/root/.ollama
-  #   networks:
-  #     - jobhunter-network
-  #   # برای GPU NVIDIA:
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: all
-  #             capabilities: [gpu]
-  #   restart: unless-stopped
-
 volumes:
   postgres_data:
-  # name: jobassistant_pgdata
-  # ollama_data:
 
 networks:
   jobhunter-network:

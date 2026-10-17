@@ -2,9 +2,9 @@
 
 **A hybrid, local-first AI career assistant — resume analysis, interview prep, and application tracking with zero hallucinations.**
 
-
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![Blazor](https://img.shields.io/badge/Blazor-WASM-512BD4?logo=blazor)](https://dotnet.microsoft.com/apps/aspnet/web-apps/blazor)
+[![Microsoft.Extensions.AI](https://img.shields.io/badge/Microsoft.Extensions.AI-Tool%20Calling-512BD4?logo=dotnet)](https://learn.microsoft.com/en-us/dotnet/ai/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-4169E1?logo=postgresql)](https://www.postgresql.org/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-000000?logo=ollama)](https://ollama.com/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)](https://www.docker.com/)
@@ -15,11 +15,9 @@
 
 ## 🧭 Overview
 
-JobHunter.AI is an end-to-end career management platform built to solve a very practical problem: **generic AI resume tools hallucinate, and generic ATS tools are dumb**. This project takes a hybrid approach — deterministic, rule-based logic where accuracy matters (skill matching, scoring) combined with a **local LLM (via Ollama)** for the parts that genuinely benefit from generative reasoning (chat, tailoring, interview question generation).
+JobHunter.AI is an end-to-end career management platform built to solve a very practical problem: **generic AI resume tools hallucinate, and generic ATS tools are dumb**. This project takes a hybrid approach — deterministic, rule-based logic where accuracy matters (skill matching, scoring, structural validation) combined with a **local LLM (via Ollama)** orchestrated through **Microsoft.Extensions.AI and Agent Skills** for the parts that genuinely benefit from generative reasoning.
 
-Everything runs **locally by default** — no data ever has to leave your machine, no API keys, no per-token cost. It's both a daily-use tool for managing a job search and a demonstration of applied .NET + AI architecture: Minimal APIs, Blazor WebAssembly, PostgreSQL, and a pragmatic RAG/prompting layer on top of Ollama.
-
-> Originally shipped as **JobAssistant**, renamed and re-architected as **JobHunter.AI**.
+Everything runs **locally by default** — no data ever has to leave your machine, no API keys, no per-token cost. It's both a daily-use tool for managing a job search and a demonstration of applied .NET + Agentic AI architecture: Minimal APIs, Blazor WebAssembly, PostgreSQL, and strict tool invocation pipelines.
 
 ---
 
@@ -38,19 +36,19 @@ Everything runs **locally by default** — no data ever has to leave your machin
 
 | Module | What it does |
 |---|---|
-| 🧠 **Smart Analyze** | Deterministic resume-to-job-description matching — real skill-gap detection, not vague AI guessing |
-| 💬 **Career Chat** | Conversational assistant for career advice, grounded in your own resume/profile data |
-| 📊 **Applications Dashboard** | Track every application: status, dates, notes, outcomes, source, with delete/filter/AI-powered semantic search |
-| 📄 **Resume Manager** | Store, organize, and version multiple resumes |
-| 🎯 **Resume Tailor** | Generates a job-specific tailored resume, exported as a clean Markdown → PDF |
-| 🗣️ **Interview Prep** | AI-generated, role-specific interview questions and talking points |
-| 🏦 **Interview Bank** | A growing, searchable bank of past interview questions and answers |
+| 🧠 **Smart Analyze** | Deterministic resume-to-job-description matching — verifiable skill-gap detection with zero LLM guessing |
+| 💬 **Career Chat** | Conversational advisor with on-demand access to your career records via Agent Skills |
+| 📊 **Applications Dashboard** | Track every application with AI-powered semantic search and direct database query tools |
+| 📄 **Resume Manager** | Store, organize, and version multiple resumes with AI-assisted recommendation |
+| 🎯 **Resume Tailor** | Self-correcting generative rewriter that ensures 100% structural parity with the original resume |
+| 🗣️ **Interview Prep** | Realistic, role-specific technical and behavioral questions generated directly from job descriptions |
+| 🏦 **Interview Bank** | Filterable, searchable repository of past questions with natural language navigation |
 
 ---
 
 ## 🏗️ Architecture
 
-JobHunter.AI is a two-project solution: a Minimal API backend and a Blazor WebAssembly frontend, backed by PostgreSQL for persistence and Ollama for local inference. The whole stack ships as three containers behind an Nginx reverse proxy.
+JobHunter.AI decouples deterministic verification from generative reasoning using **Microsoft.Extensions.AI**:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -64,21 +62,19 @@ JobHunter.AI is a two-project solution: a Minimal API backend and a Blazor WebAs
 │   JobHunter.AI.Web          │  HTTP  │      JobHunter.AI.Api          │
 │   (Blazor WebAssembly)      │◄──────►│      (ASP.NET Core Minimal)   │
 │                             │        │                                │
-│  Pages:                     │        │  Services:                    │
-│   • Applications             │        │   • AiAnalyzerService          │
-│   • CareerChat                │        │   • CareerAdvisorService       │
-│   • Resumes                   │        │   • CareerChatService          │
-│   • ResumeTailor                │        │   • DataChatService             │
-│   • InterviewBank                │        │   • SemanticSearchService        │
-└─────────────────────────────┘        │   • InterviewGeneratorService     │
-                                        │   • ResumeTailorService            │
-                                        │   • ResumeRecommendationService     │
-                                        │   • Repositories (Postgres)          │
-                                        └───────────────┬───────────────────────┘
+│  Pages:                     │        │  Agent Skills & Tools:         │
+│   • Applications            │        │   • AtsEvaluationSkills        │
+│   • CareerChat              │        │   • ApplicationDataSkills      │
+│   • Resumes                 │        │   • InterviewBankSkills        │
+│   • ResumeTailor            │        │   • CareerAdvisorSkills        │
+│   • InterviewBank           │        │                                │
+│                             │        │  Core IChatClient Pipeline     │
+│                             │        │  (Function Invocation Layer)   │
+└─────────────────────────────┘        └───────────────┬────────────────┘
                                                         │
                                             ┌───────────▼────────────┐
                                             │   Ollama (local LLM)     │
-                                            │   qwen2.5-coder:7b       │
+                                            │   llama3.2:latest        │
                                             │   (runs on the host)     │
                                             └─────────────────────────┘
                                                         │
@@ -88,21 +84,19 @@ JobHunter.AI is a two-project solution: a Minimal API backend and a Blazor WebAs
                                             └─────────────────────────┘
 ```
 
-**Design principle:** deterministic logic (skill matching, scoring, structured data, ID validation on AI output) stays in plain C# services — the LLM is only invoked where natural-language generation or reasoning is genuinely required (chat, tailoring, question generation, semantic search intent). This keeps results explainable and reproducible instead of a black box.
-
-> **Note on Ollama:** Ollama is intentionally **not** containerized — it runs on the host machine (to use your GPU/CPU directly without Docker overhead) and is reached from the containers via `host.docker.internal`.
+**Design Principle:** High-risk logic (keyword checking, structural parity, database filtering, ID resolution) stays in pure C# skills. The LLM acts purely as an agent that selects and executes tools or generates structured content constrained by JSON Schemas.
 
 ---
 
 ## 🛠️ Tech Stack
 
 - **Backend:** ASP.NET Core Minimal API (.NET 10)
+- **Agentic Abstraction:** `Microsoft.Extensions.AI` with automated tool invocation (`AIFunctionFactory`)
 - **Frontend:** Blazor WebAssembly
 - **Database:** PostgreSQL (via Npgsql)
-- **AI/LLM:** [Ollama](https://ollama.com/) running `qwen2.5-coder:7b` locally
-- **Reverse Proxy:** Nginx (serves the WASM app, proxies `/api/*` to the backend)
+- **Local AI Engine:** [Ollama](https://ollama.com/) running `llama3.2:latest`
+- **Reverse Proxy:** Nginx (serves the WASM app, proxies `/api/*` to backend)
 - **Containerization:** Docker & Docker Compose
-- **Export:** Markdown-based PDF generation for tailored resumes
 
 ---
 
@@ -110,53 +104,26 @@ JobHunter.AI is a two-project solution: a Minimal API backend and a Blazor WebAs
 
 ### Option A — Docker (recommended)
 
-This is the fastest way to get the full stack (API + Web + PostgreSQL) running, with Nginx handling routing between the two.
-
 #### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) & Docker Compose
-- [Ollama](https://ollama.com/download) installed **on the host** (not containerized), with the model pulled:
+- [Ollama](https://ollama.com/download) installed **on the host machine**, with the model pulled:
   ```bash
-  ollama pull qwen2.5-coder:7b
+  ollama pull llama3.2:latest
   ```
 
-#### Run it
+#### Run
 
 ```bash
-# Clone the repo
+# Clone the repository
 git clone https://github.com/hadihamedian/JobHunter.AI.git
 cd JobHunter.AI
 
-# Build and start everything (API, Web, Postgres) in the background
+# Build and start services (API, Web, PostgreSQL)
 docker compose up --build -d
 ```
 
-The app will be available at **http://localhost** (Nginx serves the Blazor app and proxies `/api/*` to the backend container). Postgres data persists in a named Docker volume across restarts.
-
-#### Common commands
-
-```bash
-# Rebuild after changing code, without touching Postgres
-docker compose up --build -d
-
-# Rebuild only specific services (faster)
-docker compose up --build -d api web
-
-# View logs
-docker compose logs -f api
-
-# Force a clean rebuild (bypass Docker's build cache)
-docker compose build --no-cache
-docker compose up -d
-
-# Stop and remove containers (keeps the Postgres volume/data)
-docker compose down
-
-# Stop and wipe everything, including the database volume
-docker compose down -v
-```
-
-> **Linux users:** if Ollama refuses connections from inside the container, confirm `docker-compose.yml` has `extra_hosts: ["host.docker.internal:host-gateway"]` on the `api` service — this is already configured, but worth knowing if you customize the compose file.
+The app will be available at **http://localhost:5150** (or port 80/configured proxy port).
 
 ---
 
@@ -165,41 +132,34 @@ docker compose down -v
 #### Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- [PostgreSQL](https://www.postgresql.org/download/) (running locally or accessible via connection string)
-- [Ollama](https://ollama.com/download) installed, with the model pulled:
-  ```bash
-  ollama pull qwen2.5-coder:7b
-  ```
+- [PostgreSQL](https://www.postgresql.org/download/)
+- [Ollama](https://ollama.com/download) with `llama3.2:latest`
 
-#### Configuration
-
-Update `JobHunter.AI.Api/appsettings.json` with your local settings:
+#### Configuration (`JobHunter.AI.Api/appsettings.json`)
 
 ```json
 {
   "Ollama": {
-    "Url": "http://localhost:11434/api/generate",
-    "Model": "qwen2.5-coder:7b"
+    "Endpoint": "http://localhost:11434",
+    "Model": "llama3.2:latest"
   },
   "ConnectionStrings": {
-    "DefaultConnection": "Host=localhost;Database=jobhunter;Username=postgres;Password=postgres"
+    "DefaultConnection": "Host=localhost;Database=jobassistant;Username=postgres;Password=postgres"
   }
 }
 ```
 
-#### Run it
+#### Run
 
 ```bash
-# Start the API
+# Start API
 cd JobHunter.AI.Api
 dotnet run
 
-# In a separate terminal, start the Blazor client
+# In another terminal, start Blazor Web
 cd JobHunter.AI.Web
 dotnet run
 ```
-
-The API will be available at the port shown in the console (see `Properties/launchSettings.json`), and the Blazor app will proxy requests to it.
 
 ---
 
@@ -207,34 +167,22 @@ The API will be available at the port shown in the console (see `Properties/laun
 
 ```
 JobHunter.AI/
-├── JobHunter.AI.Api/            # Backend - Minimal API
-│   ├── Models/                  # Request/response DTOs
-│   ├── Services/                # Business logic + Ollama integration
+├── JobHunter.AI.Api/            # Backend - Minimal API (.NET 10)
+│   ├── Models/                  # DTOs and contracts
+│   ├── Skills/                  # Agent Skills & Native Tools (Ats, Data, Interview, Career)
+│   ├── Services/                # Business orchestration using IChatClient
 │   ├── Dockerfile
 │   └── Program.cs
 │
 ├── JobHunter.AI.Web/            # Frontend - Blazor WASM
 │   ├── Pages/                   # Applications, CareerChat, Resumes, ResumeTailor, InterviewBank
 │   ├── Layout/
-│   ├── Models/
-│   ├── Services/                # HTTP clients to the API
-│   ├── wwwroot/
-│   │   └── nginx.conf           # Serves WASM + proxies /api/* to the api container
-│   ├── Dockerfile
-│   └── Program.cs
+│   ├── Services/                # HTTP API clients
+│   └── wwwroot/
 │
-├── docker-compose.yml           # API + Web + PostgreSQL, one command to run all three
+├── docker-compose.yml           # API + Web + PostgreSQL orchestration
 └── JobHunter.AI.slnx
 ```
-
----
-
-## 🗺️ Roadmap
-
-- [ ] Authentication / multi-user support
-- [ ] Configurable LLM backend (swap Ollama models or providers)
-- [ ] Richer analytics on the Applications Dashboard
-- [x] Dockerized setup (API + Web + Postgres in one `docker compose up`)
 
 ---
 
@@ -246,7 +194,7 @@ Licensed under the [MIT License](./LICENSE).
 
 ## 👤 Author
 
-**Hadi Hamedian** — Senior .NET Developer & Technical Lead
+**Hadi Hamedian** — Senior .NET Developer & Technical Lead  
 Building AI-integrated .NET systems, remote-first.
 
-[GitHub](https://github.com/hadihamedian) · Open to remote contract work (GMT+3:30)
+[GitHub](https://github.com/hadihamedian)
