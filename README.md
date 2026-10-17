@@ -7,6 +7,7 @@
 [![Microsoft.Extensions.AI](https://img.shields.io/badge/Microsoft.Extensions.AI-Tool%20Calling-512BD4?logo=dotnet)](https://learn.microsoft.com/en-us/dotnet/ai/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-4169E1?logo=postgresql)](https://www.postgresql.org/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-000000?logo=ollama)](https://ollama.com/)
+[![Microsoft Agent Framework](https://img.shields.io/badge/Microsoft%20Agent%20Framework-512BD4?logo=dotnet)](https://learn.microsoft.com/en-us/agent-framework/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/hadihamedian/JobHunter.AI)
@@ -85,6 +86,7 @@ JobHunter.AI decouples deterministic verification from generative reasoning usin
 
 - **Backend:** ASP.NET Core Minimal API (.NET 10)
 - **Agentic Abstraction:** `Microsoft.Extensions.AI` with automated tool invocation (`AIFunctionFactory`)
+- **AI/LLM Integration:** Microsoft Agent Framework (`Microsoft.Agents.AI`), `Microsoft.Extensions.AI` (`IChatClient`), and [OllamaSharp](https://github.com/awaescher/OllamaSharp) connecting to local Ollama
 - **Frontend:** Blazor WebAssembly
 - **Database:** PostgreSQL (via Npgsql)
 - **Local AI Engine:** [Ollama](https://ollama.com/) running `llama3.2:latest`
