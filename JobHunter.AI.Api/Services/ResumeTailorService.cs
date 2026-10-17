@@ -2,7 +2,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using JobHunter.AI.Api.Models;
-using JobHunter.AI.Api.Skills;
+using JobHunter.AI.Api.Tools;
 using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace JobHunter.AI.Api.Services;
@@ -10,7 +10,7 @@ namespace JobHunter.AI.Api.Services;
 public class ResumeTailorService(
     IChatClient chatClient,
     ResumeRepository resumeRepository,
-    AtsEvaluationSkills atsSkills,
+    AtsEvaluationTools atsTools,
     ILogger<ResumeTailorService> logger)
 {
     private const int MaxAttempts = 2;
@@ -46,7 +46,7 @@ public class ResumeTailorService(
             lastResult = result;
 
             // Self-correction evaluation via AtsEvaluationSkills
-            var violations = atsSkills.ValidateResumeStructure(resume.Content, lockedContent);
+            var violations = atsTools.ValidateResumeStructure(resume.Content, lockedContent);
 
             if (violations.Count == 0) break;
             if (attempt == MaxAttempts) break;

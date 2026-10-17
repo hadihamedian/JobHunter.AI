@@ -1,6 +1,6 @@
 ﻿using JobHunter.AI.Api.Agents;
 using JobHunter.AI.Api.Models;
-using JobHunter.AI.Api.Skills;
+using JobHunter.AI.Api.Tools;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -30,7 +30,7 @@ public class AgentTests
             })
             .ReturnsAsync(new AiChatResponse(new AiChatMessage(AiChatRole.Assistant, "Here is your career advice.")));
 
-        var skills = new CareerAdvisorSkills(null!, null!);
+        var skills = new CareerAdvisorTools(null!, null!);
         var agent = new CareerAdvisorAgent(mockClient.Object, skills, NullLogger<CareerAdvisorAgent>.Instance);
 
         var request = new CareerChatRequest(
@@ -73,7 +73,7 @@ public class AgentTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AiChatResponse(new AiChatMessage(AiChatRole.Assistant, jsonPayload)));
 
-        var skills = new ApplicationDataSkills(null!);
+        var skills = new ApplicationDataTools(null!);
         var agent = new DataChatAgent(mockClient.Object, skills, NullLogger<DataChatAgent>.Instance);
 
         var response = await agent.RunAsync(new DataChatRequest("How many interviews?", new List<DataChatMessage>()));
@@ -98,7 +98,7 @@ public class AgentTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AiChatResponse(new AiChatMessage(AiChatRole.Assistant, plainText)));
 
-        var skills = new ApplicationDataSkills(null!);
+        var skills = new ApplicationDataTools(null!);
         var agent = new DataChatAgent(mockClient.Object, skills, NullLogger<DataChatAgent>.Instance);
 
         var response = await agent.RunAsync(new DataChatRequest("Status update?", new List<DataChatMessage>()));

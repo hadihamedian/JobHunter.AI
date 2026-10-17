@@ -1,7 +1,7 @@
 ﻿using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using JobHunter.AI.Api.Models;
-using JobHunter.AI.Api.Skills;
+using JobHunter.AI.Api.Tools;
 using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace JobHunter.AI.Api.Agents;
@@ -20,15 +20,15 @@ public class CareerAdvisorAgent
         - Always answer in the exact same language the user writes in (Persian or English).
         """;
 
-    public CareerAdvisorAgent(IChatClient chatClient, CareerAdvisorSkills skills, ILogger<CareerAdvisorAgent> logger)
+    public CareerAdvisorAgent(IChatClient chatClient, CareerAdvisorTools careerAdvisorTools, ILogger<CareerAdvisorAgent> logger)
     {
         _logger = logger;
         var tools = new List<AITool>
         {
-            AIFunctionFactory.Create(skills.GetCandidateResumesAsync),
-            AIFunctionFactory.Create(skills.GetResumeContentAsync),
-            AIFunctionFactory.Create(skills.GetJobSearchStatsAsync),
-            AIFunctionFactory.Create(skills.GetRecentApplicationsAsync)
+            AIFunctionFactory.Create(careerAdvisorTools.GetCandidateResumesAsync),
+            AIFunctionFactory.Create(careerAdvisorTools.GetResumeContentAsync),
+            AIFunctionFactory.Create(careerAdvisorTools.GetJobSearchStatsAsync),
+            AIFunctionFactory.Create(careerAdvisorTools.GetRecentApplicationsAsync)
         };
 
         _agent = new ChatClientAgent(chatClient, name: "CareerAdvisor", instructions: SystemInstructions, tools: tools);

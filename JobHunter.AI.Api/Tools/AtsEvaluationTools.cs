@@ -2,9 +2,9 @@
 using System.Text.RegularExpressions;
 using JobHunter.AI.Api.Services;
 
-namespace JobHunter.AI.Api.Skills;
+namespace JobHunter.AI.Api.Tools;
 
-public class AtsEvaluationSkills
+public class AtsEvaluationTools
 {
     private static readonly Dictionary<string, string[]> ConservativeSynonyms = new(StringComparer.OrdinalIgnoreCase)
     {

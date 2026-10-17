@@ -1,11 +1,11 @@
-﻿using JobHunter.AI.Api.Skills;
+﻿using JobHunter.AI.Api.Tools;
 using Xunit;
 
 namespace JobHunter.AI.Api.Tests;
 
-public class AtsEvaluationSkillsTests
+public class AtsEvaluationToolsTests
 {
-    private readonly AtsEvaluationSkills _skills = new();
+    private readonly AtsEvaluationTools _tools = new();
 
     [Theory]
     // Valid positives
@@ -29,7 +29,7 @@ public class AtsEvaluationSkillsTests
     [InlineData("مسلط به سی‌شارپ و PostgreSQL", "PostgreSQL و Docker", true)]
     public void CheckSkillPresence_TableDriven_EvaluatesCorrectly(string resume, string skill, bool expected)
     {
-        var result = _skills.CheckSkillPresence(resume, skill);
+        var result = _tools.CheckSkillPresence(resume, skill);
         Assert.Equal(expected, result);
     }
 }

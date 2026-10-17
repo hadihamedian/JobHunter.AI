@@ -1,14 +1,14 @@
 ﻿using System.Text.Json;
 using Microsoft.Extensions.AI;
 using JobHunter.AI.Api.Models;
-using JobHunter.AI.Api.Skills;
+using JobHunter.AI.Api.Tools;
 using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace JobHunter.AI.Api.Services;
 
 public class InterviewBankChatService(
     IChatClient chatClient,
-    InterviewBankSkills skills,
+    InterviewBankTools tools,
     ILogger<InterviewBankChatService> logger)
 {
     public async Task<InterviewBankChatResponse> ChatAsync(InterviewBankChatRequest request)
@@ -68,7 +68,7 @@ public class InterviewBankChatService(
         }
 
         var searchTopic = string.IsNullOrWhiteSpace(keyword) ? request.Question.Trim() : keyword;
-        var filtered = await skills.SearchQuestionsAsync(searchTopic);
+        var filtered = await tools.SearchQuestionsAsync(searchTopic);
 
         string textAnswer;
         if (filtered.Count == 0)

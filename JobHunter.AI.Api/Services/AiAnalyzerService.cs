@@ -2,12 +2,12 @@
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using JobHunter.AI.Api.Models;
-using JobHunter.AI.Api.Skills;
+using JobHunter.AI.Api.Tools;
 using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace JobHunter.AI.Api.Services;
 
-public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationSkills atsSkills)
+public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsTools)
 {
     public async Task<AnalyzeResult?> AnalyzeAsync(string resume, string jobDesc)
     {
@@ -33,7 +33,7 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationSkills atsSk
                 continue;
             }
 
-            if (atsSkills.CheckSkillPresence(resume, req.Text))
+            if (atsTools.CheckSkillPresence(resume, req.Text))
                 matchingSkills.Add(req.Text);
             else
                 missingSkills.Add(req.Text);

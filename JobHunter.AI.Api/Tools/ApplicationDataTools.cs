@@ -2,9 +2,9 @@
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 
-namespace JobHunter.AI.Api.Skills;
+namespace JobHunter.AI.Api.Tools;
 
-public class ApplicationDataSkills(ApplicationRepository repository)
+public class ApplicationDataTools(ApplicationRepository repository)
 {
     [Description("Fetches aggregated statistics for job applications: total count, active interviews, response rate, and monthly counts.")]
     public async Task<DashboardStats> GetDashboardStatsAsync()

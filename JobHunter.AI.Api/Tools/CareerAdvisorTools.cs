@@ -2,11 +2,11 @@
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 
-namespace JobHunter.AI.Api.Skills;
+namespace JobHunter.AI.Api.Tools;
 
 public record LeanResume(Guid Id, string Name, int WordCount, bool IsDefault);
 
-public class CareerAdvisorSkills(
+public class CareerAdvisorTools(
     ResumeRepository resumeRepository,
     ApplicationRepository applicationRepository)
 {

@@ -2,9 +2,9 @@
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 
-namespace JobHunter.AI.Api.Skills;
+namespace JobHunter.AI.Api.Tools;
 
-public class InterviewBankSkills(InterviewRepository repository)
+public class InterviewBankTools(InterviewRepository repository)
 {
     [Description("Searches the interview question bank by topic, keyword, question type, or status.")]
     public async Task<List<InterviewQuestion>> SearchQuestionsAsync(

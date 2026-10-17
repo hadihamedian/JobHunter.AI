@@ -1,7 +1,7 @@
 using JobHunter.AI.Api.Agents;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
-using JobHunter.AI.Api.Skills;
+using JobHunter.AI.Api.Tools;
 using Microsoft.Extensions.AI;
 using Npgsql;
 using OllamaSharp;
@@ -42,10 +42,10 @@ builder.Services.AddScoped<ResumeRepository>();
 builder.Services.AddScoped<InterviewRepository>();
 
 // Deterministic Tools & Skills
-builder.Services.AddScoped<ApplicationDataSkills>();
-builder.Services.AddScoped<AtsEvaluationSkills>();
-builder.Services.AddScoped<InterviewBankSkills>();
-builder.Services.AddScoped<CareerAdvisorSkills>();
+builder.Services.AddScoped<ApplicationDataTools>();
+builder.Services.AddScoped<AtsEvaluationTools>();
+builder.Services.AddScoped<InterviewBankTools>();
+builder.Services.AddScoped<CareerAdvisorTools>();
 
 // Single IChatClient backed by OllamaSharp with context window middleware
 builder.Services.AddSingleton<IChatClient>(sp =>

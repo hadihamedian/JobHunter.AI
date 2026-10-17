@@ -3,7 +3,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
-using JobHunter.AI.Api.Skills;
+using JobHunter.AI.Api.Tools;
 using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace JobHunter.AI.Api.Agents;
@@ -28,14 +28,14 @@ public class DataChatAgent
         Always answer in the exact same language as the user query (Persian or English).
         """;
 
-    public DataChatAgent(IChatClient chatClient, ApplicationDataSkills skills, ILogger<DataChatAgent> logger)
+    public DataChatAgent(IChatClient chatClient, ApplicationDataTools applicationDataTools, ILogger<DataChatAgent> logger)
     {
         _logger = logger;
         var tools = new List<AITool>
         {
-            AIFunctionFactory.Create(skills.GetDashboardStatsAsync),
-            AIFunctionFactory.Create(skills.GetApplicationsAsync),
-            AIFunctionFactory.Create(skills.GetApplicationByIdAsync)
+            AIFunctionFactory.Create(applicationDataTools.GetDashboardStatsAsync),
+            AIFunctionFactory.Create(applicationDataTools.GetApplicationsAsync),
+            AIFunctionFactory.Create(applicationDataTools.GetApplicationByIdAsync)
         };
 
         _agent = new ChatClientAgent(chatClient, name: "DataChat", instructions: SystemInstructions, tools: tools);
