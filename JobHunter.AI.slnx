@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="JobHunter.AI.Api.Tests/JobHunter.AI.Api.Tests.csproj" />
   <Project Path="JobHunter.AI.Api/JobHunter.AI.Api.csproj" />
   <Project Path="JobHunter.AI.Web/JobHunter.AI.Web.csproj" />
 </Solution>
