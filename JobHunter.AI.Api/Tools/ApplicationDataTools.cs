@@ -14,10 +14,12 @@ public class ApplicationDataTools(ApplicationRepository repository)
 
     [Description("Fetches the list of job applications, optionally filtered by status (e.g., Applied, Rejected, HRInterview, Offer) or search term.")]
     public async Task<List<ApplicationSummary>> GetApplicationsAsync(
-        [Description("Optional status filter such as Saved, Applied, HRInterview, TechnicalInterview, FinalInterview, Offer, Rejected")] string? status = null,
-        [Description("Optional search keyword for company name, position, or notes")] string? search = null)
+        [Description("Status filter such as Saved, Applied, HRInterview, TechnicalInterview, FinalInterview, Offer, Rejected. Pass empty string for all.")] string status = "",
+        [Description("Search keyword for company name, position, or notes. Pass empty string for no keyword filter.")] string search = "")
     {
-        return await repository.GetAllAsync(status, search);
+        var statusFilter = string.IsNullOrWhiteSpace(status) ? null : status.Trim();
+        var searchFilter = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
+        return await repository.GetAllAsync(statusFilter, searchFilter);
     }
 
     [Description("Fetches full details of a specific job application by its unique Guid ID.")]

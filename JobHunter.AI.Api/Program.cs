@@ -2,6 +2,7 @@ using JobHunter.AI.Api.Agents;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 using JobHunter.AI.Api.Tools;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.AI;
 using Npgsql;
 using OllamaSharp;
@@ -65,7 +66,8 @@ builder.Services.AddScoped<InterviewBankChatService>();
 builder.Services.AddScoped<ResumeRecommendationService>();
 builder.Services.AddScoped<ResumeTailorService>();
 builder.Services.AddScoped<SemanticSearchService>();
-
+builder.Services.AddScoped<CareerAdvisorAgent>();
+builder.Services.AddScoped<DataChatAgent>();
 
 var app = builder.Build();
 app.UseRouting();
@@ -90,7 +92,7 @@ app.MapPost("/api/applications/chat", async (DataChatRequest req, DataChatAgent 
 
 // === DETERMINISTIC PIPELINE ENDPOINTS ===
 
-app.MapPost("/api/analyze", async (AnalyzeRequest request, AiAnalyzerService analyzer) =>
+app.MapPost("/api/analyze", async (AnalyzeRequest request, [FromServices] AiAnalyzerService analyzer) =>
 {
     if (string.IsNullOrWhiteSpace(request.ResumeContent) || string.IsNullOrWhiteSpace(request.JobDescription))
         return Results.BadRequest("Resume and job description are required.");
@@ -114,7 +116,7 @@ app.MapPost("/api/analyze-by-id", async (
     return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
 });
 
-app.MapPost("/api/tailor", async (TailorRequest request, ResumeTailorService tailorService) =>
+app.MapPost("/api/tailor", async (TailorRequest request, [FromServices] ResumeTailorService tailorService) =>
 {
     if (request.ResumeId == Guid.Empty || string.IsNullOrWhiteSpace(request.JobDescription))
         return Results.BadRequest("ResumeId and JobDescription are required.");

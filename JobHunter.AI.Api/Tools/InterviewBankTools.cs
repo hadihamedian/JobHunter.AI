@@ -8,7 +8,7 @@ public class InterviewBankTools(InterviewRepository repository)
 {
     [Description("Searches the interview question bank by topic, keyword, question type, or status.")]
     public async Task<List<InterviewQuestion>> SearchQuestionsAsync(
-        [Description("Topic or keyword to search for (e.g., 'EF Core', 'SQL', 'Behavioral'). Leave empty for all questions.")] string? topic = null)
+        [Description("Topic or keyword to search for (e.g., 'EF Core', 'SQL', 'Behavioral'). Pass empty string for all questions.")] string topic = "")
     {
         var all = await repository.GetAllAsync();
         if (string.IsNullOrWhiteSpace(topic))
