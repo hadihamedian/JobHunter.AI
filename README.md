@@ -2,6 +2,7 @@
 
 **A hybrid architecture using deterministic C# algorithms for ATS skill matching, scoring inputs, and structure validation; local LLMs are strictly reserved for requirement extraction, response generation, and conversational tool selection.**
 
+[![CI](https://github.com/hadihamedian/JobHunter.AI/actions/workflows/ci.yml/badge.svg)](https://github.com/hadihamedian/JobHunter.AI/actions/workflows/ci.yml)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![Blazor](https://img.shields.io/badge/Blazor-WASM-512BD4?logo=blazor)](https://dotnet.microsoft.com/apps/aspnet/web-apps/blazor)
 [![Microsoft.Extensions.AI](https://img.shields.io/badge/Microsoft.Extensions.AI-Tool%20Calling-512BD4?logo=dotnet)](https://learn.microsoft.com/en-us/dotnet/ai/)
@@ -78,7 +79,7 @@ JobHunter.AI decouples deterministic verification from generative reasoning usin
                                        └────────────────────────┘
 ```
 
-**Design Principle:** High-risk logic (keyword checking, structural parity, database filtering, ID resolution) stays in pure C# skills. The LLM acts purely as an agent that selects and executes tools or generates structured content constrained by JSON Schemas.
+**Design Principle:** High-risk logic (keyword checking, structural parity, database filtering, ID resolution) stays in pure C# tools. The LLM acts purely as an agent that selects and executes tools or generates structured content returning structured JSON (JSON mode).
 
 ---
 
@@ -156,6 +157,11 @@ cd JobHunter.AI.Web
 dotnet run
 ```
 
+## 🧪 Testing
+
+- **Deterministic Tools & Regex**: Table-driven tests in `AtsEvaluationToolsTests` verifying negative lookaround token matching and domain aliases without false positives.
+- **Structure Validation**: `ResumeStructureValidatorTests` ensuring markdown sections, bullet counts, and tech stacks are preserved during tailoring.
+- **Conversational Agents**: `AgentTests` verifying role mapping, tool execution schemas, and JSON/plain-text fallback using a mocked `IChatClient`.
 ---
 
 ## 📂 Project Structure
