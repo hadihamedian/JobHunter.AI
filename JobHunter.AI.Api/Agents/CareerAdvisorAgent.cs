@@ -57,7 +57,7 @@ public class CareerAdvisorAgent
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error executing CareerAdvisorAgent.");
-            return new CareerChatResponse($"Error: {ex.Message}");
+            return new CareerChatResponse("Something went wrong, please try again.");
         }
     }
 }

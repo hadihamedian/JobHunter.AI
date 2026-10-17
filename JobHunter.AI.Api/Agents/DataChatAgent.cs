@@ -88,7 +88,7 @@ public class DataChatAgent
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error executing DataChatAgent.");
-            return new DataChatResponse($"Error: {ex.Message}", null);
+            return new DataChatResponse("Something went wrong, please try again.", null);
         }
     }
 
