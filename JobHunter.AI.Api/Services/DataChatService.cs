@@ -57,7 +57,7 @@ public class DataChatService(IChatClient chatClient, ApplicationDataSkills skill
         };
 
         var response = await chatClient.GetResponseAsync(messages, chatOptions);
-        var rawResponse = response.Message.Text?.Trim() ?? string.Empty;
+        var rawResponse = response.Text?.Trim() ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(rawResponse))
             return null;

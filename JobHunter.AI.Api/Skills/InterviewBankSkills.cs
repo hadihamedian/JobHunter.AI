@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel;
+using Microsoft.SemanticKernel;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 
@@ -6,24 +7,22 @@ namespace JobHunter.AI.Api.Skills;
 
 public class InterviewBankSkills(InterviewRepository repository)
 {
-    [Description("Searches and filters saved interview questions by a specific topic, technology, or keyword (e.g., 'EF Core', 'Behavioral', 'SQL').")]
+    [KernelFunction("search_questions")]
+    [Description("Searches the interview question bank by topic, keyword, question type, or status.")]
     public async Task<List<InterviewQuestion>> SearchQuestionsAsync(
-        [Description("The topic or keyword to search for in questions, hints, or notes")] string keyword)
+        [Description("Topic or keyword to search for (e.g., 'EF Core', 'SQL', 'Behavioral'). Leave empty for all questions.")] string? topic = null)
     {
         var all = await repository.GetAllAsync();
-        if (string.IsNullOrWhiteSpace(keyword)) return all;
+        if (string.IsNullOrWhiteSpace(topic))
+            return all;
 
+        var kw = topic.Trim();
         return all.Where(q =>
-            q.Question.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
-            (q.Hint != null && q.Hint.Contains(keyword, StringComparison.OrdinalIgnoreCase)) ||
-            (q.PersonalNote != null && q.PersonalNote.Contains(keyword, StringComparison.OrdinalIgnoreCase)) ||
-            q.QuestionType.Contains(keyword, StringComparison.OrdinalIgnoreCase)
+            q.Question.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+            q.QuestionType.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+            q.Status.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+            (q.Hint is not null && q.Hint.Contains(kw, StringComparison.OrdinalIgnoreCase)) ||
+            (q.PersonalNote is not null && q.PersonalNote.Contains(kw, StringComparison.OrdinalIgnoreCase))
         ).ToList();
-    }
-
-    [Description("Retrieves all interview questions stored across all job applications.")]
-    public async Task<List<InterviewQuestion>> GetAllQuestionsAsync()
-    {
-        return await repository.GetAllAsync();
     }
 }

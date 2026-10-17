@@ -1,50 +1,53 @@
 ﻿using System.ComponentModel;
+using Microsoft.SemanticKernel;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 
 namespace JobHunter.AI.Api.Skills;
 
-public record LeanResume(Guid Id, string Name, int WordCount, bool IsDefault, List<string> SectionHeadings);
+public record LeanResume(Guid Id, string Name, int WordCount, bool IsDefault);
 
 public class CareerAdvisorSkills(
     ResumeRepository resumeRepository,
     ApplicationRepository applicationRepository)
 {
-    private const int MaxResumeContentLength = 4000;
+    private const int MaxResumeChars = 4000;
 
-    [Description("Retrieves a lean summary of all uploaded resumes including IDs, names, word counts, and section headings.")]
+    [KernelFunction("get_candidate_resumes")]
+    [Description("Retrieves a lightweight list of all uploaded candidate resumes (ID, Name, WordCount, IsDefault).")]
     public async Task<List<LeanResume>> GetCandidateResumesAsync()
     {
-        var resumes = await resumeRepository.GetAllWithContentAsync();
-        return resumes.Select(r =>
-        {
-            var sig = ResumeStructureValidator.Extract(r.Content);
-            return new LeanResume(r.Id, r.Name, r.WordCount, r.IsDefault, sig.SectionNames);
-        }).ToList();
+        var all = await resumeRepository.GetAllAsync();
+        return all.Select(r => new LeanResume(r.Id, r.Name, r.WordCount, r.IsDefault)).ToList();
     }
 
-    [Description("Retrieves the full text of a single resume by its ID, safely truncated if it exceeds maximum capacity.")]
-    public async Task<string> GetResumeContentAsync([Description("The GUID of the resume")] Guid id)
+    [KernelFunction("get_resume_content")]
+    [Description("Fetches the markdown text content of a specific resume by its ID, safely truncated to fit context limits.")]
+    public async Task<string> GetResumeContentAsync(
+        [Description("The UUID of the resume to retrieve")] Guid resumeId)
     {
-        var resume = await resumeRepository.GetByIdAsync(id);
+        var resume = await resumeRepository.GetByIdAsync(resumeId);
         if (resume is null)
             return "Resume not found.";
 
-        if (resume.Content.Length > MaxResumeContentLength)
-            return string.Concat(resume.Content.AsSpan(0, MaxResumeContentLength), "\n\n[truncated]");
+        if (resume.Content.Length <= MaxResumeChars)
+            return resume.Content;
 
-        return resume.Content;
+        return string.Concat(resume.Content.AsSpan(0, MaxResumeChars), "\n[truncated]");
     }
 
-    [Description("Retrieves the user's overall job search statistics and application metrics.")]
+    [KernelFunction("get_job_search_stats")]
+    [Description("Retrieves high-level statistics about the candidate's job search (total applications, active interviews, response rate, rejections).")]
     public async Task<DashboardStats> GetJobSearchStatsAsync()
     {
         return await applicationRepository.GetStatsAsync();
     }
 
-    [Description("Retrieves the latest job applications with their current statuses and interview stages.")]
+    [KernelFunction("get_recent_applications")]
+    [Description("Retrieves the candidate's recent job applications including company name, position, status, and source.")]
     public async Task<List<ApplicationSummary>> GetRecentApplicationsAsync()
     {
-        return await applicationRepository.GetAllAsync();
+        var all = await applicationRepository.GetAllAsync();
+        return all.Take(20).ToList();
     }
 }

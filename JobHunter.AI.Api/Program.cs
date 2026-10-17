@@ -1,10 +1,10 @@
+using JobHunter.AI.Api.Agents;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 using JobHunter.AI.Api.Skills;
 using Npgsql;
-using Microsoft.Extensions.AI;
-using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
-using ChatResponse = Microsoft.Extensions.AI.ChatResponse;
+using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.ChatCompletion;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,8 +12,7 @@ builder.Services.AddHttpClient("", client =>
 {
     client.Timeout = TimeSpan.FromMinutes(5);
 });
-builder.Services.AddScoped<AiAnalyzerService>();
-builder.Services.AddScoped<CareerChatService>(); 
+
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
@@ -28,55 +27,82 @@ builder.Services.AddCors(options =>
 
 var ollamaEndpoint = builder.Configuration["Ollama:Endpoint"] ?? "http://localhost:11434";
 var ollamaModel = builder.Configuration["Ollama:Model"] ?? "llama3.2:latest";
-var numCtx = builder.Configuration.GetValue<int>("Ollama:NumCtx", 8192);
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
                        ?? "Host=localhost;Database=jobassistant;Username=postgres;Password=postgres";
 var dataSource = NpgsqlDataSource.Create(connectionString);
 builder.Services.AddSingleton(dataSource);
+
+// Repositories
 builder.Services.AddScoped<ApplicationRepository>();
-builder.Services.AddScoped<DataChatService>();
 builder.Services.AddScoped<ResumeRepository>();
-builder.Services.AddScoped<ResumeRecommendationService>();
 builder.Services.AddScoped<InterviewRepository>();
-builder.Services.AddScoped<InterviewGeneratorService>();
-builder.Services.AddScoped<InterviewBankChatService>();
-builder.Services.AddScoped<CareerAdvisorService>();
-builder.Services.AddScoped<ResumeTailorService>();
-builder.Services.AddScoped<SemanticSearchService>();
+
+// Core Skills
 builder.Services.AddScoped<ApplicationDataSkills>();
 builder.Services.AddScoped<AtsEvaluationSkills>();
 builder.Services.AddScoped<InterviewBankSkills>();
 builder.Services.AddScoped<CareerAdvisorSkills>();
 
-builder.Services.AddSingleton<IChatClient>(sp =>
+// Semantic Kernel Setup (Using native Ollama /v1 OpenAI-compatible endpoint)
+builder.Services.AddScoped<Kernel>(sp =>
 {
-    var rawClient = new OllamaChatClient(new Uri(ollamaEndpoint), ollamaModel);
+    var kernelBuilder = Kernel.CreateBuilder();
 
-    return new ChatClientBuilder(rawClient)
-        .Use(inner => new OllamaOptionsChatClient(inner, numCtx))
-        .UseFunctionInvocation()
-        .Build();
+    // Ollama natively supports OpenAI compatible endpoints at /v1
+    var ollamaUri = new Uri($"{ollamaEndpoint.TrimEnd('/')}/v1");
+    kernelBuilder.AddOpenAIChatCompletion(
+        modelId: ollamaModel,
+        apiKey: "ollama", // Non-empty dummy key required by OpenAI client
+        endpoint: ollamaUri
+    );
+
+    return kernelBuilder.Build();
 });
+
+// Bridge to IChatClient for backward compatibility with existing services
+builder.Services.AddScoped<Microsoft.Extensions.AI.IChatClient>(sp =>
+{
+    var kernel = sp.GetRequiredService<Kernel>();
+    var chatService = kernel.GetRequiredService<IChatCompletionService>();
+    return chatService.AsChatClient();
+});
+
+// Internal AI Services
+builder.Services.AddScoped<AiAnalyzerService>();
+builder.Services.AddScoped<CareerChatService>(); 
+builder.Services.AddScoped<InterviewGeneratorService>();
+builder.Services.AddScoped<InterviewBankChatService>();
+builder.Services.AddScoped<ResumeRecommendationService>();
+builder.Services.AddScoped<ResumeTailorService>();
+builder.Services.AddScoped<SemanticSearchService>();
+
+// Microsoft Agent Framework Agents
+builder.Services.AddScoped<AtsAnalyzerAgent>();
+builder.Services.AddScoped<CareerAdvisorAgent>();
+builder.Services.AddScoped<DataChatAgent>();
+builder.Services.AddScoped<InterviewBankAgent>();
+builder.Services.AddScoped<ResumeTailorAgent>();
 
 var app = builder.Build();
 app.UseRouting();
 app.UseCors();
 
-app.MapPost("/api/analyze", async (AnalyzeRequest request, AiAnalyzerService analyzer) =>
+// === AGENT-POWERED ENDPOINTS ===
+
+app.MapPost("/api/analyze", async (AnalyzeRequest request, AtsAnalyzerAgent agent) =>
 {
-    if (string.IsNullOrWhiteSpace(request.ResumeContent) || 
-        string.IsNullOrWhiteSpace(request.JobDescription))
+    if (string.IsNullOrWhiteSpace(request.ResumeContent) || string.IsNullOrWhiteSpace(request.JobDescription))
         return Results.BadRequest("Resume and job description are required.");
 
-    var result = await analyzer.AnalyzeAsync(request.ResumeContent, request.JobDescription);
+    var result = await agent.InvokeAsync(request);
     return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
 });
 
 app.MapPost("/api/analyze-by-id", async (
     AnalyzeByIdRequest req,
     ResumeRepository resumeRepo,
-    AiAnalyzerService analyzer) =>
+    AtsAnalyzerAgent agent) =>
 {
     if (req.ResumeId == Guid.Empty || string.IsNullOrWhiteSpace(req.JobDescription))
         return Results.BadRequest("ResumeId and JobDescription are required.");
@@ -84,10 +110,41 @@ app.MapPost("/api/analyze-by-id", async (
     var resume = await resumeRepo.GetByIdAsync(req.ResumeId);
     if (resume is null) return Results.NotFound("Resume not found.");
 
-    var result = await analyzer.AnalyzeAsync(resume.Content, req.JobDescription);
+    var result = await agent.InvokeAsync(new AnalyzeRequest(resume.Content, req.JobDescription));
     return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
 });
 
+app.MapPost("/api/career-chat", async (CareerChatRequest request, CareerAdvisorAgent agent) =>
+{
+    if (string.IsNullOrWhiteSpace(request.UserMessage))
+        return Results.BadRequest("Message is required.");
+
+    var response = await agent.InvokeAsync(request);
+    return Results.Ok(response);
+});
+
+app.MapPost("/api/applications/chat", async (DataChatRequest req, DataChatAgent agent) =>
+{
+    var result = await agent.InvokeAsync(req);
+    return Results.Ok(result);
+});
+
+app.MapPost("/api/interviews/chat", async (InterviewBankChatRequest req, InterviewBankAgent agent) =>
+{
+    var result = await agent.InvokeAsync(req);
+    return Results.Ok(result);
+});
+
+app.MapPost("/api/tailor", async (TailorRequest request, ResumeTailorAgent agent) =>
+{
+    if (request.ResumeId == Guid.Empty || string.IsNullOrWhiteSpace(request.JobDescription))
+        return Results.BadRequest("ResumeId and JobDescription are required.");
+
+    var result = await agent.InvokeAsync(request);
+    return result is null ? Results.NotFound("Resume not found or AI failed.") : Results.Ok(result);
+});
+
+// Single-turn chat helper on Home page
 app.MapPost("/api/chat", async (ChatRequest request, CareerChatService chatService) =>
 {
     if (string.IsNullOrWhiteSpace(request.UserMessage))
@@ -107,72 +164,38 @@ app.MapPost("/semantic-search", async (SemanticSearchRequest req, SemanticSearch
         : Results.Ok(result);
 });
 
-app.MapPost("/api/career-chat", async (
-    CareerChatRequest request,
-    CareerAdvisorService svc) =>
-{
-    if (string.IsNullOrWhiteSpace(request.UserMessage))
-        return Results.BadRequest("Message is required.");
-
-    var response = await svc.ChatAsync(request);
-    return Results.Ok(response);
-});
-
-app.MapPost("/api/tailor", async (
-    TailorRequest request,
-    ResumeTailorService svc) =>
-{
-    if (request.ResumeId == Guid.Empty ||
-        string.IsNullOrWhiteSpace(request.JobDescription))
-        return Results.BadRequest("ResumeId and JobDescription are required.");
-
-    var result = await svc.TailorAsync(request);
-    return result is null
-        ? Results.NotFound("Resume not found or AI failed.")
-        : Results.Ok(result);
-});
+// === CRUD & MANAGEMENT APIS ===
 
 var apps = app.MapGroup("/api/applications");
-
 apps.MapGet("/", async (ApplicationRepository repo, string? status = null, string? q = null) =>
     Results.Ok(await repo.GetAllAsync(status, q)));
-
 apps.MapGet("/stats", async (ApplicationRepository repo) =>
     Results.Ok(await repo.GetStatsAsync()));
-
 apps.MapGet("/{id:guid}", async (Guid id, ApplicationRepository repo) =>
 {
     var appData = await repo.GetByIdAsync(id);
     return appData is null ? Results.NotFound() : Results.Ok(appData);
 });
-
 apps.MapPost("/", async (CreateApplicationRequest req, ApplicationRepository repo) =>
 {
     var id = await repo.CreateAsync(req);
     return Results.Created($"/api/applications/{id}", new { id });
 });
-
 apps.MapPatch("/{id:guid}", async (Guid id, UpdateApplicationRequest req, ApplicationRepository repo) =>
 {
     var ok = await repo.UpdateAsync(id, req);
     return ok ? Results.NoContent() : Results.NotFound();
 });
-
 apps.MapDelete("/{id:guid}", async (Guid id, ApplicationRepository repo) =>
 {
     var ok = await repo.DeleteAsync(id);
     return ok ? Results.NoContent() : Results.NotFound();
 });
-
-apps.MapPost("/chat", async (DataChatRequest req, DataChatService chatSvc) =>
-    Results.Ok(await chatSvc.ChatAsync(req)));
-
 apps.MapPost("/{id:guid}/move-up", async (Guid id, ApplicationRepository repo) =>
 {
     var ok = await repo.MoveUpAsync(id);
     return ok ? Results.NoContent() : Results.BadRequest();
 });
-
 apps.MapPost("/{id:guid}/move-down", async (Guid id, ApplicationRepository repo) =>
 {
     var ok = await repo.MoveDownAsync(id);
@@ -180,10 +203,8 @@ apps.MapPost("/{id:guid}/move-down", async (Guid id, ApplicationRepository repo)
 });
 
 var resumes = app.MapGroup("/api/resumes");
-
 resumes.MapGet("/", async (ResumeRepository repo) =>
     Results.Ok(await repo.GetAllAsync()));
-
 resumes.MapPost("/", async (CreateResumeRequest req, ResumeRepository repo) =>
 {
     if (string.IsNullOrWhiteSpace(req.Name) || string.IsNullOrWhiteSpace(req.Content))
@@ -191,34 +212,25 @@ resumes.MapPost("/", async (CreateResumeRequest req, ResumeRepository repo) =>
     var id = await repo.CreateAsync(req);
     return Results.Created($"/api/resumes/{id}", new { id });
 });
-
-resumes.MapPost("/recommend", async (
-    RecommendResumeRequest req,
-    ResumeRecommendationService svc) =>
+resumes.MapPost("/recommend", async (RecommendResumeRequest req, ResumeRecommendationService svc) =>
 {
     if (string.IsNullOrWhiteSpace(req.JobDescription))
         return Results.BadRequest("Job description is required.");
     var result = await svc.RecommendAsync(req.JobDescription);
-    return result is null
-        ? Results.NotFound("No resumes found.")
-        : Results.Ok(result);
+    return result is null ? Results.NotFound("No resumes found.") : Results.Ok(result);
 });
-
 resumes.MapGet("/{id:guid}", async (Guid id, ResumeRepository repo) =>
 {
     var resume = await repo.GetByIdAsync(id);
     return resume is null ? Results.NotFound() : Results.Ok(resume);
 });
-
 resumes.MapPatch("/{id:guid}", async (Guid id, UpdateResumeRequest req, ResumeRepository repo) =>
 {
     var ok = await repo.UpdateAsync(id, req);
     return ok ? Results.NoContent() : Results.NotFound();
 });
-
 resumes.MapGet("/{id:guid}/usage", async (Guid id, ApplicationRepository appRepo) =>
     Results.Ok(new ResumeUsage(await appRepo.GetByResumeIdAsync(id))));
-
 resumes.MapDelete("/{id:guid}", async (Guid id, ResumeRepository repo, ApplicationRepository appRepo) =>
 {
     var usage = await appRepo.GetByResumeIdAsync(id);
@@ -232,80 +244,36 @@ resumes.MapDelete("/{id:guid}", async (Guid id, ResumeRepository repo, Applicati
     }
     catch (Npgsql.PostgresException ex) when (ex.SqlState == "23503")
     {
-        // race condition safety net: یه اپلیکیشن بین چک ما و حذف واقعی وصل شد
         var freshUsage = await appRepo.GetByResumeIdAsync(id);
         return Results.Conflict(new ResumeUsage(freshUsage));
     }
 });
 
-
-
 var interviews = app.MapGroup("/api/interviews");
-
-
-interviews.MapGet("/application/{applicationId:guid}",
-    async (Guid applicationId, InterviewRepository repo) =>
-        Results.Ok(await repo.GetByApplicationAsync(applicationId)));
-
-interviews.MapGet("/",
-    async (InterviewRepository repo) =>
-        Results.Ok(await repo.GetAllAsync()));
-
-interviews.MapPost("/generate",
-    async (GenerateQuestionsRequest req, InterviewGeneratorService svc) =>
-    {
-        if (req.ApplicationId == Guid.Empty)
-            return Results.BadRequest("ApplicationId is required.");
-        var questions = await svc.GenerateAsync(req);
-        return Results.Ok(questions);
-    });
-
-interviews.MapPatch("/{id:guid}",
-    async (Guid id, UpdateQuestionRequest req, InterviewRepository repo) =>
-    {
-        var ok = await repo.UpdateAsync(id, req);
-        return ok ? Results.NoContent() : Results.NotFound();
-    });
-
-interviews.MapDelete("/application/{applicationId:guid}",
-    async (Guid applicationId, InterviewRepository repo) =>
-    {
-        await repo.DeleteByApplicationAsync(applicationId);
-        return Results.NoContent();
-    });
-
-interviews.MapPost("/chat",
-    async (InterviewBankChatRequest req, InterviewBankChatService svc) =>
-        Results.Ok(await svc.ChatAsync(req)));
-
-
+interviews.MapGet("/application/{applicationId:guid}", async (Guid applicationId, InterviewRepository repo) =>
+    Results.Ok(await repo.GetByApplicationAsync(applicationId)));
+interviews.MapGet("/", async (InterviewRepository repo) =>
+    Results.Ok(await repo.GetAllAsync()));
+interviews.MapPost("/generate", async (GenerateQuestionsRequest req, InterviewGeneratorService svc) =>
+{
+    if (req.ApplicationId == Guid.Empty)
+        return Results.BadRequest("ApplicationId is required.");
+    var questions = await svc.GenerateAsync(req);
+    return Results.Ok(questions);
+});
+interviews.MapPatch("/{id:guid}", async (Guid id, UpdateQuestionRequest req, InterviewRepository repo) =>
+{
+    var ok = await repo.UpdateAsync(id, req);
+    return ok ? Results.NoContent() : Results.NotFound();
+});
+interviews.MapDelete("/application/{applicationId:guid}", async (Guid applicationId, InterviewRepository repo) =>
+{
+    await repo.DeleteByApplicationAsync(applicationId);
+    return Results.NoContent();
+});
 
 await ResumeRepository.InitDbAsync(dataSource);
 await InterviewRepository.InitDbAsync(dataSource);
 await ApplicationRepository.InitDbAsync(dataSource);
 
 app.Run();
-
-
-
-
-
-public class OllamaOptionsChatClient(IChatClient innerClient, int numCtx) : DelegatingChatClient(innerClient)
-{
-    public override Task<ChatResponse> GetResponseAsync(
-        IList<ChatMessage> chatMessages,
-        ChatOptions? options = null,
-        CancellationToken cancellationToken = default)
-    {
-        options ??= new ChatOptions();
-        options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
-        
-        // Ollama API expects num_ctx inside options payload
-        if (!options.AdditionalProperties.ContainsKey("num_ctx"))
-        {
-            options.AdditionalProperties["num_ctx"] = numCtx;
-        }
-
-        return base.GetResponseAsync(chatMessages, options, cancellationToken);
-    }
-}

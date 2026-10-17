@@ -14,8 +14,6 @@ public class InterviewBankChatService(
 {
     public async Task<InterviewBankChatResponse> ChatAsync(InterviewBankChatRequest request)
     {
-        var allQuestions = await repository.GetAllAsync();
-
         var messages = new List<AiChatMessage>
         {
             new(ChatRole.System, """

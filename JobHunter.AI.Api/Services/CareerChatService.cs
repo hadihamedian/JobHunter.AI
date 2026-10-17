@@ -57,7 +57,8 @@ public class CareerChatService(IChatClient chatClient, ILogger<CareerChatService
         try
         {
             var response = await chatClient.GetResponseAsync(messages, options);
-            return new AppChatResponse(response.Text.Trim());
+            var reply = response.Text?.Trim() ?? string.Empty;
+            return new AppChatResponse(reply);
         }
         catch (Exception ex)
         {

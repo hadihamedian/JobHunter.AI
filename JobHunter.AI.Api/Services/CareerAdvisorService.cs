@@ -51,7 +51,7 @@ public class CareerAdvisorService(
         try
         {
             var response = await chatClient.GetResponseAsync(messages, options);
-            return new CareerChatResponse(response.Message.Text?.Trim() ?? "No response from advisor.");
+            return new CareerChatResponse(response.Text?.Trim() ?? "No response from advisor.");
         }
         catch (Exception ex)
         {

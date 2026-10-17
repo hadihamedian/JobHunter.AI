@@ -78,7 +78,7 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationSkills atsSk
         };
 
         var response = await chatClient.GetResponseAsync(messages, options);
-        var rawText = response.Message.Text?.Trim() ?? string.Empty;
+        var rawText = response.Text?.Trim() ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(rawText)) return null;
 
@@ -147,7 +147,7 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationSkills atsSk
         };
 
         var response = await chatClient.GetResponseAsync(messages, options);
-        var rawText = response.Message.Text?.Trim() ?? string.Empty;
+        var rawText = response.Text?.Trim() ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(rawText)) return null;
 

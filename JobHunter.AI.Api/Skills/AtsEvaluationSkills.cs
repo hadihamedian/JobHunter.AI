@@ -1,45 +1,68 @@
 ﻿using System.ComponentModel;
 using System.Text.RegularExpressions;
+using Microsoft.SemanticKernel;
 using JobHunter.AI.Api.Services;
 
 namespace JobHunter.AI.Api.Skills;
 
 public class AtsEvaluationSkills
 {
-    private static readonly Dictionary<string, string[]> ConservativeAliases = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, string[]> ConservativeSynonyms = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["C#"] = ["csharp", "c#"],
-        ["csharp"] = ["c#", "csharp"],
-        [".NET"] = ["dotnet", ".net", ".net core"],
-        ["dotnet"] = [".net", "dotnet", ".net core"],
-        [".NET Core"] = [".net", "dotnet", ".net core"],
-        ["PostgreSQL"] = ["postgres", "postgresql"],
-        ["Postgres"] = ["postgresql", "postgres"],
-        ["JavaScript"] = ["js", "javascript"],
-        ["JS"] = ["javascript", "js"],
-        ["Entity Framework"] = ["ef core", "ef", "entity framework"],
-        ["EF Core"] = ["entity framework", "ef", "ef core"],
-        ["EF"] = ["entity framework", "ef core", "ef"]
+        ["C#"] = ["C#", "csharp", "سی‌شارپ", "سی شارپ"],
+        [".NET"] = [".NET", "dotnet", "دات‌نت", "دات نت"],
+        ["PostgreSQL"] = ["PostgreSQL", "Postgres"],
+        ["JavaScript"] = ["JavaScript", "JS"],
+        ["TypeScript"] = ["TypeScript", "TS"],
+        ["Entity Framework"] = ["Entity Framework", "EF Core", "EFCore"]
     };
 
-    [Description("Checks deterministically whether a specific skill or technology exists in the candidate's resume text.")]
+    [KernelFunction("check_skill_presence")]
+    [Description("Deterministically checks whether a specific technical skill or its conservative alias is present in the resume text.")]
     public bool CheckSkillPresence(
-        [Description("The full resume text")] string resumeText,
-        [Description("The skill or technology keyword to look for")] string skillName)
+        [Description("The full resume text")] string resume,
+        [Description("The skill or technology requirement to check")] string skillText)
     {
-        if (string.IsNullOrWhiteSpace(resumeText) || string.IsNullOrWhiteSpace(skillName))
+        if (string.IsNullOrWhiteSpace(resume) || string.IsNullOrWhiteSpace(skillText))
             return false;
 
-        var normalizedResume = NormalizeText(resumeText);
-        var candidates = ExtractCandidateTokens(skillName);
+        var candidates = ExtractCandidateTokens(skillText);
 
-        foreach (var candidate in candidates)
+        foreach (var token in candidates)
         {
-            var variants = GetSearchVariants(candidate);
-            foreach (var variant in variants)
+            if (MatchesTokenOrSynonyms(resume, token))
+                return true;
+        }
+
+        return false;
+    }
+
+    [KernelFunction("validate_resume_structure")]
+    [Description("Validates structural integrity between the original markdown resume and the tailored markdown resume.")]
+    public List<string> ValidateResumeStructure(
+        [Description("The original resume markdown")] string originalMarkdown,
+        [Description("The tailored resume markdown")] string tailoredMarkdown)
+    {
+        var origSig = ResumeStructureValidator.Extract(originalMarkdown);
+        var tailoredSig = ResumeStructureValidator.Extract(tailoredMarkdown);
+
+        var violations = ResumeStructureValidator.Compare(origSig, tailoredSig);
+        violations.AddRange(ResumeStructureValidator.DetectDuplicateHeadings(tailoredMarkdown));
+
+        return violations;
+    }
+
+    private static bool MatchesTokenOrSynonyms(string resume, string token)
+    {
+        if (ContainsWholeToken(resume, token))
+            return true;
+
+        foreach (var (canonical, aliases) in ConservativeSynonyms)
+        {
+            if ( string.Equals(canonical, token, StringComparison.OrdinalIgnoreCase) ||
+                 aliases.Any(a => string.Equals(a, token, StringComparison.OrdinalIgnoreCase)))
             {
-                var pattern = $@"(?<![A-Za-z0-9]){Regex.Escape(variant)}(?![A-Za-z0-9])";
-                if (Regex.IsMatch(normalizedResume, pattern, RegexOptions.IgnoreCase))
+                if (aliases.Any(alias => ContainsWholeToken(resume, alias)))
                     return true;
             }
         }
@@ -47,71 +70,23 @@ public class AtsEvaluationSkills
         return false;
     }
 
-    [Description("Validates that a tailored resume maintains full structural parity (all sections, bullet counts, and project items) with the original resume.")]
-    public List<string> ValidateResumeStructure(
-        [Description("The original resume markdown content")] string originalResume,
-        [Description("The newly tailored resume markdown content")] string tailoredResume)
+    private static bool ContainsWholeToken(string text, string token)
     {
-        var originalSig = ResumeStructureValidator.Extract(originalResume);
-        var tailoredSig = ResumeStructureValidator.Extract(tailoredResume);
-
-        var violations = ResumeStructureValidator.Compare(originalSig, tailoredSig);
-        violations.AddRange(ResumeStructureValidator.DetectDuplicateHeadings(tailoredResume));
-
-        return violations;
+        var escaped = Regex.Escape(token.Trim());
+        var pattern = $@"(?<![A-Za-z0-9]){escaped}(?![A-Za-z0-9])";
+        return Regex.IsMatch(text, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
-    public static List<string> ExtractCandidateTokens(string skillText)
+    private static List<string> ExtractCandidateTokens(string skillText)
     {
-        if (string.IsNullOrWhiteSpace(skillText))
-            return [];
+        var parts = skillText
+            .Split(['(', ')', '/', ',', '&'], StringSplitOptions.RemoveEmptyEntries)
+            .SelectMany(p => Regex.Split(p, @"\s+and\s+|\s+or\s+|\s+و\s+", RegexOptions.IgnoreCase))
+            .Select(p => p.Trim())
+            .Where(p => p.Length > 1)
+            .ToList();
 
-        var results = new List<string>();
-        var cleanInput = skillText.Trim();
-
-        var parenMatches = Regex.Matches(cleanInput, @"\(([^)]+)\)");
-        foreach (Match m in parenMatches)
-        {
-            var inside = m.Groups[1].Value.Trim();
-            if (inside.Length > 0)
-                results.Add(inside);
-        }
-
-        var withoutParens = Regex.Replace(cleanInput, @"\([^)]*\)", " ").Trim();
-        var rawAlternatives = Regex.Split(withoutParens, @"\s*[,/&]\s*|\s+(?:and|و)\s+", RegexOptions.IgnoreCase);
-
-        foreach (var alt in rawAlternatives)
-        {
-            var trimmed = NormalizeText(alt);
-            if (trimmed.Length > 0)
-                results.Add(trimmed);
-        }
-
-        if (results.Count == 0 && cleanInput.Length > 0)
-            results.Add(NormalizeText(cleanInput));
-
-        return results.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-    }
-
-    private static List<string> GetSearchVariants(string token)
-    {
-        var normalized = NormalizeText(token);
-        var list = new List<string> { normalized };
-
-        if (ConservativeAliases.TryGetValue(normalized, out var aliases))
-        {
-            foreach (var alias in aliases)
-                list.Add(NormalizeText(alias));
-        }
-
-        return list.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-    }
-
-    private static string NormalizeText(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return string.Empty;
-
-        return Regex.Replace(text.Trim(), @"\s+", " ");
+        parts.Add(skillText.Trim());
+        return parts.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 }

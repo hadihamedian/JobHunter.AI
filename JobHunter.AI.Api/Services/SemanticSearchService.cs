@@ -65,7 +65,7 @@ public class SemanticSearchService(
         try
         {
             var response = await chatClient.GetResponseAsync(messages, options);
-            var rawText = response.Message.Text?.Trim() ?? string.Empty;
+            var rawText = response.Text?.Trim() ?? string.Empty;
 
             if (string.IsNullOrWhiteSpace(rawText)) return null;
 
