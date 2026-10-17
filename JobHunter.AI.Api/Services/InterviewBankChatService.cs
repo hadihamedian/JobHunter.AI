@@ -9,7 +9,6 @@ namespace JobHunter.AI.Api.Services;
 public class InterviewBankChatService(
     IChatClient chatClient,
     InterviewBankSkills skills,
-    InterviewRepository repository,
     ILogger<InterviewBankChatService> logger)
 {
     public async Task<InterviewBankChatResponse> ChatAsync(InterviewBankChatRequest request)

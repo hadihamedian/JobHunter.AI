@@ -2,9 +2,11 @@ using JobHunter.AI.Api.Agents;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 using JobHunter.AI.Api.Skills;
+using Microsoft.Extensions.AI;
 using Npgsql;
-using Microsoft.SemanticKernel;
-using Microsoft.SemanticKernel.ChatCompletion;
+using OllamaSharp;
+using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
+using AiChatResponse = Microsoft.Extensions.AI.ChatResponse;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -27,6 +29,7 @@ builder.Services.AddCors(options =>
 
 var ollamaEndpoint = builder.Configuration["Ollama:Endpoint"] ?? "http://localhost:11434";
 var ollamaModel = builder.Configuration["Ollama:Model"] ?? "llama3.2:latest";
+var numCtx = builder.Configuration.GetValue<int>("Ollama:NumCtx", 8192);
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
                        ?? "Host=localhost;Database=jobassistant;Username=postgres;Password=postgres";
@@ -38,37 +41,23 @@ builder.Services.AddScoped<ApplicationRepository>();
 builder.Services.AddScoped<ResumeRepository>();
 builder.Services.AddScoped<InterviewRepository>();
 
-// Core Skills
+// Deterministic Tools & Skills
 builder.Services.AddScoped<ApplicationDataSkills>();
 builder.Services.AddScoped<AtsEvaluationSkills>();
 builder.Services.AddScoped<InterviewBankSkills>();
 builder.Services.AddScoped<CareerAdvisorSkills>();
 
-// Semantic Kernel Setup (Using native Ollama /v1 OpenAI-compatible endpoint)
-builder.Services.AddScoped<Kernel>(sp =>
+// Single IChatClient backed by OllamaSharp with context window middleware
+builder.Services.AddSingleton<IChatClient>(sp =>
 {
-    var kernelBuilder = Kernel.CreateBuilder();
+    var ollamaClient = new OllamaApiClient(new Uri(ollamaEndpoint), ollamaModel);
 
-    // Ollama natively supports OpenAI compatible endpoints at /v1
-    var ollamaUri = new Uri($"{ollamaEndpoint.TrimEnd('/')}/v1");
-    kernelBuilder.AddOpenAIChatCompletion(
-        modelId: ollamaModel,
-        apiKey: "ollama", // Non-empty dummy key required by OpenAI client
-        endpoint: ollamaUri
-    );
-
-    return kernelBuilder.Build();
+    return new ChatClientBuilder(ollamaClient)
+        .Use(inner => new OllamaNumCtxChatClient(inner, numCtx))
+        .Build();
 });
 
-// Bridge to IChatClient for backward compatibility with existing services
-builder.Services.AddScoped<Microsoft.Extensions.AI.IChatClient>(sp =>
-{
-    var kernel = sp.GetRequiredService<Kernel>();
-    var chatService = kernel.GetRequiredService<IChatCompletionService>();
-    return chatService.AsChatClient();
-});
-
-// Internal AI Services
+// Deterministic AI & Pipeline Services
 builder.Services.AddScoped<AiAnalyzerService>();
 builder.Services.AddScoped<CareerChatService>(); 
 builder.Services.AddScoped<InterviewGeneratorService>();
@@ -77,32 +66,43 @@ builder.Services.AddScoped<ResumeRecommendationService>();
 builder.Services.AddScoped<ResumeTailorService>();
 builder.Services.AddScoped<SemanticSearchService>();
 
-// Microsoft Agent Framework Agents
-builder.Services.AddScoped<AtsAnalyzerAgent>();
-builder.Services.AddScoped<CareerAdvisorAgent>();
-builder.Services.AddScoped<DataChatAgent>();
-builder.Services.AddScoped<InterviewBankAgent>();
-builder.Services.AddScoped<ResumeTailorAgent>();
 
 var app = builder.Build();
 app.UseRouting();
 app.UseCors();
 
-// === AGENT-POWERED ENDPOINTS ===
+// === CONVERSATIONAL AGENT ENDPOINTS ===
 
-app.MapPost("/api/analyze", async (AnalyzeRequest request, AtsAnalyzerAgent agent) =>
+app.MapPost("/api/career-chat", async (CareerChatRequest request, CareerAdvisorAgent agent) =>
+{
+    if (string.IsNullOrWhiteSpace(request.UserMessage))
+        return Results.BadRequest("Message is required.");
+
+    var response = await agent.RunAsync(request);
+    return Results.Ok(response);
+});
+
+app.MapPost("/api/applications/chat", async (DataChatRequest req, DataChatAgent agent) =>
+{
+    var result = await agent.RunAsync(req);
+    return Results.Ok(result);
+});
+
+// === DETERMINISTIC PIPELINE ENDPOINTS ===
+
+app.MapPost("/api/analyze", async (AnalyzeRequest request, AiAnalyzerService analyzer) =>
 {
     if (string.IsNullOrWhiteSpace(request.ResumeContent) || string.IsNullOrWhiteSpace(request.JobDescription))
         return Results.BadRequest("Resume and job description are required.");
 
-    var result = await agent.InvokeAsync(request);
+    var result = await analyzer.AnalyzeAsync(request.ResumeContent, request.JobDescription);
     return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
 });
 
 app.MapPost("/api/analyze-by-id", async (
     AnalyzeByIdRequest req,
     ResumeRepository resumeRepo,
-    AtsAnalyzerAgent agent) =>
+    AiAnalyzerService analyzer) =>
 {
     if (req.ResumeId == Guid.Empty || string.IsNullOrWhiteSpace(req.JobDescription))
         return Results.BadRequest("ResumeId and JobDescription are required.");
@@ -110,41 +110,25 @@ app.MapPost("/api/analyze-by-id", async (
     var resume = await resumeRepo.GetByIdAsync(req.ResumeId);
     if (resume is null) return Results.NotFound("Resume not found.");
 
-    var result = await agent.InvokeAsync(new AnalyzeRequest(resume.Content, req.JobDescription));
+    var result = await analyzer.AnalyzeAsync(resume.Content, req.JobDescription);
     return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
 });
 
-app.MapPost("/api/career-chat", async (CareerChatRequest request, CareerAdvisorAgent agent) =>
-{
-    if (string.IsNullOrWhiteSpace(request.UserMessage))
-        return Results.BadRequest("Message is required.");
-
-    var response = await agent.InvokeAsync(request);
-    return Results.Ok(response);
-});
-
-app.MapPost("/api/applications/chat", async (DataChatRequest req, DataChatAgent agent) =>
-{
-    var result = await agent.InvokeAsync(req);
-    return Results.Ok(result);
-});
-
-app.MapPost("/api/interviews/chat", async (InterviewBankChatRequest req, InterviewBankAgent agent) =>
-{
-    var result = await agent.InvokeAsync(req);
-    return Results.Ok(result);
-});
-
-app.MapPost("/api/tailor", async (TailorRequest request, ResumeTailorAgent agent) =>
+app.MapPost("/api/tailor", async (TailorRequest request, ResumeTailorService tailorService) =>
 {
     if (request.ResumeId == Guid.Empty || string.IsNullOrWhiteSpace(request.JobDescription))
         return Results.BadRequest("ResumeId and JobDescription are required.");
 
-    var result = await agent.InvokeAsync(request);
+    var result = await tailorService.TailorAsync(request);
     return result is null ? Results.NotFound("Resume not found or AI failed.") : Results.Ok(result);
 });
 
-// Single-turn chat helper on Home page
+app.MapPost("/api/interviews/chat", async (InterviewBankChatRequest req, InterviewBankChatService bankChatService) =>
+{
+    var result = await bankChatService.ChatAsync(req);
+    return Results.Ok(result);
+});
+
 app.MapPost("/api/chat", async (ChatRequest request, CareerChatService chatService) =>
 {
     if (string.IsNullOrWhiteSpace(request.UserMessage))
@@ -164,7 +148,7 @@ app.MapPost("/semantic-search", async (SemanticSearchRequest req, SemanticSearch
         : Results.Ok(result);
 });
 
-// === CRUD & MANAGEMENT APIS ===
+// === APPLICATION MANAGEMENT ENDPOINTS ===
 
 var apps = app.MapGroup("/api/applications");
 apps.MapGet("/", async (ApplicationRepository repo, string? status = null, string? q = null) =>
@@ -277,3 +261,22 @@ await InterviewRepository.InitDbAsync(dataSource);
 await ApplicationRepository.InitDbAsync(dataSource);
 
 app.Run();
+
+public class OllamaNumCtxChatClient(IChatClient innerClient, int numCtx) : DelegatingChatClient(innerClient)
+{
+    public override Task<AiChatResponse> GetResponseAsync(
+        IEnumerable<AiChatMessage> chatMessages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        options ??= new ChatOptions();
+        options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+
+        if (!options.AdditionalProperties.ContainsKey("num_ctx"))
+        {
+            options.AdditionalProperties["num_ctx"] = numCtx;
+        }
+
+        return base.GetResponseAsync(chatMessages, options, cancellationToken);
+    }
+}

@@ -1,5 +1,4 @@
 ﻿using System.ComponentModel;
-using Microsoft.SemanticKernel;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 
@@ -7,7 +6,6 @@ namespace JobHunter.AI.Api.Skills;
 
 public class InterviewBankSkills(InterviewRepository repository)
 {
-    [KernelFunction("search_questions")]
     [Description("Searches the interview question bank by topic, keyword, question type, or status.")]
     public async Task<List<InterviewQuestion>> SearchQuestionsAsync(
         [Description("Topic or keyword to search for (e.g., 'EF Core', 'SQL', 'Behavioral'). Leave empty for all questions.")] string? topic = null)

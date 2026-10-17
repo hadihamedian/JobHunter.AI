@@ -1,5 +1,4 @@
 ﻿using System.ComponentModel;
-using Microsoft.SemanticKernel;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 
@@ -13,7 +12,6 @@ public class CareerAdvisorSkills(
 {
     private const int MaxResumeChars = 4000;
 
-    [KernelFunction("get_candidate_resumes")]
     [Description("Retrieves a lightweight list of all uploaded candidate resumes (ID, Name, WordCount, IsDefault).")]
     public async Task<List<LeanResume>> GetCandidateResumesAsync()
     {
@@ -21,7 +19,6 @@ public class CareerAdvisorSkills(
         return all.Select(r => new LeanResume(r.Id, r.Name, r.WordCount, r.IsDefault)).ToList();
     }
 
-    [KernelFunction("get_resume_content")]
     [Description("Fetches the markdown text content of a specific resume by its ID, safely truncated to fit context limits.")]
     public async Task<string> GetResumeContentAsync(
         [Description("The UUID of the resume to retrieve")] Guid resumeId)
@@ -36,14 +33,12 @@ public class CareerAdvisorSkills(
         return string.Concat(resume.Content.AsSpan(0, MaxResumeChars), "\n[truncated]");
     }
 
-    [KernelFunction("get_job_search_stats")]
     [Description("Retrieves high-level statistics about the candidate's job search (total applications, active interviews, response rate, rejections).")]
     public async Task<DashboardStats> GetJobSearchStatsAsync()
     {
         return await applicationRepository.GetStatsAsync();
     }
 
-    [KernelFunction("get_recent_applications")]
     [Description("Retrieves the candidate's recent job applications including company name, position, status, and source.")]
     public async Task<List<ApplicationSummary>> GetRecentApplicationsAsync()
     {

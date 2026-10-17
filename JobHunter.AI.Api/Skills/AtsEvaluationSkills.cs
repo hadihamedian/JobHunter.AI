@@ -1,6 +1,5 @@
 ﻿using System.ComponentModel;
 using System.Text.RegularExpressions;
-using Microsoft.SemanticKernel;
 using JobHunter.AI.Api.Services;
 
 namespace JobHunter.AI.Api.Skills;
@@ -17,7 +16,6 @@ public class AtsEvaluationSkills
         ["Entity Framework"] = ["Entity Framework", "EF Core", "EFCore"]
     };
 
-    [KernelFunction("check_skill_presence")]
     [Description("Deterministically checks whether a specific technical skill or its conservative alias is present in the resume text.")]
     public bool CheckSkillPresence(
         [Description("The full resume text")] string resume,
@@ -37,7 +35,6 @@ public class AtsEvaluationSkills
         return false;
     }
 
-    [KernelFunction("validate_resume_structure")]
     [Description("Validates structural integrity between the original markdown resume and the tailored markdown resume.")]
     public List<string> ValidateResumeStructure(
         [Description("The original resume markdown")] string originalMarkdown,
@@ -59,8 +56,8 @@ public class AtsEvaluationSkills
 
         foreach (var (canonical, aliases) in ConservativeSynonyms)
         {
-            if ( string.Equals(canonical, token, StringComparison.OrdinalIgnoreCase) ||
-                 aliases.Any(a => string.Equals(a, token, StringComparison.OrdinalIgnoreCase)))
+            if (string.Equals(canonical, token, StringComparison.OrdinalIgnoreCase) ||
+                aliases.Any(a => string.Equals(a, token, StringComparison.OrdinalIgnoreCase)))
             {
                 if (aliases.Any(alias => ContainsWholeToken(resume, alias)))
                     return true;

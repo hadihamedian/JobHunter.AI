@@ -55,33 +55,26 @@ JobHunter.AI decouples deterministic verification from generative reasoning usin
 │                        Nginx (reverse proxy)                  │
 │                     serves Blazor WASM + /api/* → api         │
 └───────────────────────────────┬────────────────────────────────┘
-                                 │
-                ┌────────────────┴─────────────────┐
-                │                                   │
-┌───────────────▼───────────┐        ┌──────────────▼───────────────┐
-│   JobHunter.AI.Web          │  HTTP  │      JobHunter.AI.Api          │
-│   (Blazor WebAssembly)      │◄──────►│      (ASP.NET Core Minimal)   │
-│                             │        │                                │
-│  Pages:                     │        │  Agent Skills & Tools:         │
-│   • Applications            │        │   • AtsEvaluationSkills        │
-│   • CareerChat              │        │   • ApplicationDataSkills      │
-│   • Resumes                 │        │   • InterviewBankSkills        │
-│   • ResumeTailor            │        │   • CareerAdvisorSkills        │
-│   • InterviewBank           │        │                                │
-│                             │        │  Core IChatClient Pipeline     │
-│                             │        │  (Function Invocation Layer)   │
-└─────────────────────────────┘        └───────────────┬────────────────┘
-                                                        │
-                                            ┌───────────▼────────────┐
-                                            │   Ollama (local LLM)     │
-                                            │   llama3.2:latest        │
-                                            │   (runs on the host)     │
-                                            └─────────────────────────┘
-                                                        │
-                                            ┌───────────▼────────────┐
-                                            │      PostgreSQL          │
-                                            │      (Docker container)  │
-                                            └─────────────────────────┘
+                                │
+                ┌───────────────┴──────────────────┐
+                │                                  │
+┌───────────────▼───────────┐       ┌──────────────▼───────────────┐
+│   JobHunter.AI.Web        │ HTTP  │      JobHunter.AI.Api        │
+│   (Blazor WebAssembly)    │◄─────►│   (ASP.NET Core Minimal API) │
+│                           │       │                              │
+│  Pages:                   │       │  Conversational Agents (MAF):│
+│   • CareerChat            │       │   • CareerAdvisorAgent       │
+│   • Applications (Chat)   │       │   • DataChatAgent            │
+│   • Resumes               │       │  Deterministic Services:     │
+│   • ResumeTailor          │       │   • AiAnalyzerService        │
+│   • InterviewBank         │       │   • ResumeTailorService      │
+│                           │       │   • InterviewBankChatService │
+└───────────────────────────┘       └──────────────┬───────────────┘
+                                                   │
+                                       ┌───────────▼────────────┐
+                                       │   Ollama (OllamaSharp) │
+                                       │   llama3.2:latest      │
+                                       └────────────────────────┘
 ```
 
 **Design Principle:** High-risk logic (keyword checking, structural parity, database filtering, ID resolution) stays in pure C# skills. The LLM acts purely as an agent that selects and executes tools or generates structured content constrained by JSON Schemas.

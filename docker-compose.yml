@@ -29,7 +29,6 @@ services:
       - ASPNETCORE_ENVIRONMENT=Docker
       - ASPNETCORE_URLS=http://+:8080
       - Ollama__Endpoint=http://host.docker.internal:11434
-      - Ollama__Url=http://host.docker.internal:11434/api/generate
       - Ollama__Model=llama3.2:latest
       - Ollama__NumCtx=8192
       - ConnectionStrings__DefaultConnection=Host=postgres;Database=jobassistant;Username=postgres;Password=postgres

@@ -1,62 +1,63 @@
-﻿using Microsoft.SemanticKernel;
-using Microsoft.SemanticKernel.Agents;
-using Microsoft.SemanticKernel.ChatCompletion;
+﻿using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Skills;
+using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace JobHunter.AI.Api.Agents;
 
-public class CareerAdvisorAgent : IJobHunterAgent<CareerChatRequest, CareerChatResponse>
+public class CareerAdvisorAgent
 {
-    private readonly ChatCompletionAgent _agent;
+    private readonly ChatClientAgent _agent;
+    private readonly ILogger<CareerAdvisorAgent> _logger;
 
-    public string Name => "CareerAdvisorAgent";
-    public string Instructions => """
-        You are a senior technical career advisor and mentor for software engineers.
-        You have direct access to candidate resumes, application history, and job search metrics via tools.
+    public const string SystemInstructions = """
+        You are an expert technical career advisor and mentor for software engineers.
+        You have direct access to tools that retrieve candidate resumes, job applications, and career search metrics.
         - Give personalized, direct, and actionable advice.
-        - Always inspect data using available tools when answering specific questions about resumes or stats.
-        - Keep answers focused (3-5 sentences unless detailed breakdown is needed).
-        - Always respond in the exact same language as the user (Persian or English).
+        - Always query the provided tools when asked about specific profile details, metrics, or resumes.
+        - Keep answers focused (3-5 sentences unless detailed strategic plans are requested).
+        - Always answer in the exact same language the user writes in (Persian or English).
         """;
 
-    public CareerAdvisorAgent(Kernel kernel, CareerAdvisorSkills skills)
+    public CareerAdvisorAgent(IChatClient chatClient, CareerAdvisorSkills skills, ILogger<CareerAdvisorAgent> logger)
     {
-        var agentKernel = kernel.Clone();
-        agentKernel.Plugins.Add(KernelPluginFactory.CreateFromObject(skills, "CareerAdvisorSkills"));
-
-        _agent = new ChatCompletionAgent
+        _logger = logger;
+        var tools = new List<AITool>
         {
-            Name = Name,
-            Instructions = Instructions,
-            Kernel = agentKernel,
-            Arguments = new KernelArguments(new PromptExecutionSettings
-            {
-                FunctionChoiceBehavior = FunctionChoiceBehavior.Auto()
-            })
+            AIFunctionFactory.Create(skills.GetCandidateResumesAsync),
+            AIFunctionFactory.Create(skills.GetResumeContentAsync),
+            AIFunctionFactory.Create(skills.GetJobSearchStatsAsync),
+            AIFunctionFactory.Create(skills.GetRecentApplicationsAsync)
         };
+
+        _agent = new ChatClientAgent(chatClient, name: "CareerAdvisor", instructions: SystemInstructions, tools: tools);
     }
 
-    public async Task<CareerChatResponse> InvokeAsync(CareerChatRequest request, CancellationToken cancellationToken = default)
+    public async Task<CareerChatResponse> RunAsync(CareerChatRequest request, CancellationToken cancellationToken = default)
     {
-        var history = new ChatHistory();
+        var messages = new List<AiChatMessage>();
 
-        foreach (var msg in request.History)
+        foreach (var historyMsg in request.History)
         {
-            var role = msg.Role.Equals("user", StringComparison.OrdinalIgnoreCase)
-                ? AuthorRole.User
-                : AuthorRole.Assistant;
-            history.AddMessage(role, msg.Content);
+            var role = historyMsg.Role.Equals("user", StringComparison.OrdinalIgnoreCase)
+                ? ChatRole.User
+                : ChatRole.Assistant;
+            messages.Add(new AiChatMessage(role, historyMsg.Content));
         }
 
-        history.AddUserMessage(request.UserMessage);
+        messages.Add(new AiChatMessage(ChatRole.User, request.UserMessage));
 
-        var replyText = string.Empty;
-        await foreach (var response in _agent.InvokeAsync(history, cancellationToken: cancellationToken))
+        try
         {
-            replyText += response.Content;
+            var response = await _agent.RunAsync(messages, session: null, cancellationToken: cancellationToken);
+            var reply = response.Text?.Trim() ?? "No response from advisor.";
+            return new CareerChatResponse(reply);
         }
-
-        return new CareerChatResponse(string.IsNullOrWhiteSpace(replyText) ? "No response generated." : replyText.Trim());
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error executing CareerAdvisorAgent.");
+            return new CareerChatResponse($"Error: {ex.Message}");
+        }
     }
 }

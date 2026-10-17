@@ -15,4 +15,8 @@
 		<PackageReference Include="Markdig" Version="0.37.0" />
 	</ItemGroup>
 
+	<ItemGroup>
+	  <_ContentIncludedByDefault Remove="wwwroot\sample-data\weather.json" />
+	</ItemGroup>
+
 </Project>
