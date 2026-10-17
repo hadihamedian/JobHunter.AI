@@ -1,6 +1,6 @@
 # 🎯 JobHunter.AI
 
-**A hybrid, local-first AI career assistant — resume analysis, interview prep, and application tracking with zero hallucinations.**
+**A hybrid architecture using deterministic C# algorithms for ATS skill matching, scoring inputs, and structure validation; local LLMs are strictly reserved for requirement extraction, response generation, and conversational tool selection.**
 
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![Blazor](https://img.shields.io/badge/Blazor-WASM-512BD4?logo=blazor)](https://dotnet.microsoft.com/apps/aspnet/web-apps/blazor)
@@ -15,7 +15,7 @@
 
 ## 🧭 Overview
 
-JobHunter.AI is an end-to-end career management platform built to solve a very practical problem: **generic AI resume tools hallucinate, and generic ATS tools are dumb**. This project takes a hybrid approach — deterministic, rule-based logic where accuracy matters (skill matching, scoring, structural validation) combined with a **local LLM (via Ollama)** orchestrated through **Microsoft.Extensions.AI and Agent Skills** for the parts that genuinely benefit from generative reasoning.
+JobHunter.AI is an end-to-end career management platform built to solve a very practical problem: **generic AI resume tools hallucinate, and generic ATS tools are dumb**. This project takes a hybrid approach — deterministic, rule-based logic where accuracy matters (skill matching, scoring, structural validation) combined with a **local LLM (via Ollama)** orchestrated through **Microsoft.Extensions.AI and tools ** for the parts that genuinely benefit from generative reasoning.
 
 Everything runs **locally by default** — no data ever has to leave your machine, no API keys, no per-token cost. It's both a daily-use tool for managing a job search and a demonstration of applied .NET + Agentic AI architecture: Minimal APIs, Blazor WebAssembly, PostgreSQL, and strict tool invocation pipelines.
 
@@ -37,7 +37,7 @@ Everything runs **locally by default** — no data ever has to leave your machin
 | Module | What it does |
 |---|---|
 | 🧠 **Smart Analyze** | Deterministic resume-to-job-description matching — verifiable skill-gap detection with zero LLM guessing |
-| 💬 **Career Chat** | Conversational advisor with on-demand access to your career records via Agent Skills |
+| 💬 **Career Chat** | Conversational advisor with on-demand access to your career records via tools |
 | 📊 **Applications Dashboard** | Track every application with AI-powered semantic search and direct database query tools |
 | 📄 **Resume Manager** | Store, organize, and version multiple resumes with AI-assisted recommendation |
 | 🎯 **Resume Tailor** | Self-correcting generative rewriter that ensures 100% structural parity with the original resume |
@@ -162,7 +162,7 @@ dotnet run
 JobHunter.AI/
 ├── JobHunter.AI.Api/            # Backend - Minimal API (.NET 10)
 │   ├── Models/                  # DTOs and contracts
-│   ├── Skills/                  # Agent Skills & Native Tools (Ats, Data, Interview, Career)
+│   ├── Tools/                  # Tools & Native Tools (Ats, Data, Interview, Career)
 │   ├── Services/                # Business orchestration using IChatClient
 │   ├── Dockerfile
 │   └── Program.cs
