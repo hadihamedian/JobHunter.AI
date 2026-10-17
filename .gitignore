@@ -403,3 +403,5 @@ obj/
 riderModule.iml
 /_ReSharper.Caches/
 codetree.txt
+
+codetree*.txt
