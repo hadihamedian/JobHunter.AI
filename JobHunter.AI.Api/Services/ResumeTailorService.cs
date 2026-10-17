@@ -45,7 +45,7 @@ public class ResumeTailorService(
             result = result with { TailoredContent = lockedContent };
             lastResult = result;
 
-            // Self-correction evaluation via AtsEvaluationSkills
+            // Self-correction evaluation via AtsEvaluationTools
             var violations = atsTools.ValidateResumeStructure(resume.Content, lockedContent);
 
             if (violations.Count == 0) break;

@@ -42,7 +42,7 @@ builder.Services.AddScoped<ApplicationRepository>();
 builder.Services.AddScoped<ResumeRepository>();
 builder.Services.AddScoped<InterviewRepository>();
 
-// Deterministic Tools & Skills
+// Deterministic Tools
 builder.Services.AddScoped<ApplicationDataTools>();
 builder.Services.AddScoped<AtsEvaluationTools>();
 builder.Services.AddScoped<InterviewBankTools>();

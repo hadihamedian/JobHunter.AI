@@ -20,7 +20,7 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
             .Select(g => g.First())
             .ToList();
 
-        // Stage 2: Deterministic verification via AtsEvaluationSkills
+        // Stage 2: Deterministic verification via AtsEvaluationTools
         var matchingSkills = new List<string>();
         var missingSkills = new List<string>();
         var experienceRequirements = new List<RequirementItem>();
