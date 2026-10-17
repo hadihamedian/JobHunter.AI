@@ -9,35 +9,25 @@ namespace JobHunter.AI.Api.Services;
 public class InterviewBankChatService(
     IChatClient chatClient,
     InterviewBankSkills skills,
-    InterviewRepository repository)
+    InterviewRepository repository,
+    ILogger<InterviewBankChatService> logger)
 {
     public async Task<InterviewBankChatResponse> ChatAsync(InterviewBankChatRequest request)
     {
         var allQuestions = await repository.GetAllAsync();
 
-        var tools = new List<AITool>
-        {
-            AIFunctionFactory.Create(skills.SearchQuestionsAsync),
-            AIFunctionFactory.Create(skills.GetAllQuestionsAsync)
-        };
-
         var messages = new List<AiChatMessage>
         {
             new(ChatRole.System, """
-                You are an interview question bank manager.
-                Your task is to find and return question IDs from the user's database.
+                You are an interview question query parser.
+                Extract the target topic, technology, or keyword the user is asking about (e.g. "EF Core", "SQL", "Behavioral").
+                If the user asks for all questions or no topic is specified, leave keyword empty.
+                If the user requested a specific quantity, extract that number into requestedCount.
 
-                RULES:
-                1. NEVER define or explain technologies (never write paragraphs like "EF Core is...").
-                2. If the user asks for questions on a topic, call SearchQuestionsAsync.
-                3. If the user asks for more questions than exist in the bank, clearly state: "Your bank only has X question(s) for this topic."
-                4. Output MUST be valid JSON only.
-
-                JSON format:
+                Respond ONLY in JSON:
                 {
-                   "textAnswer": "<1 short sentence stating how many questions exist in the bank>",
-                   "hasFilteredList": true,
-                   "filteredQuestionIds": ["<guid>"]
+                   "keyword": "<extracted keyword or empty string>",
+                   "requestedCount": <integer or null>
                 }
                 """)
         };
@@ -54,97 +44,51 @@ public class InterviewBankChatService(
 
         var options = new ChatOptions
         {
-            Tools = tools,
             Temperature = 0.0f,
             ResponseFormat = ChatResponseFormat.Json
         };
 
+        var keyword = string.Empty;
+        int? requestedCount = null;
+
         try
         {
             var response = await chatClient.GetResponseAsync(messages, options);
-            var rawText = response.Message.Text?.Trim() ?? string.Empty;
+            var rawText = JsonResponseCleaner.Clean(response.Text);
 
-            if (string.IsNullOrWhiteSpace(rawText))
-                return new InterviewBankChatResponse("No response from AI.", null);
-
-            rawText = CleanJsonFences(rawText);
-
-            var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var raw = JsonSerializer.Deserialize<RawChatResult>(rawText, jsonOptions);
-
-            if (raw is null)
-                return new InterviewBankChatResponse("Could not parse AI response.", null);
-
-            List<InterviewQuestion>? filtered = null;
-            if (raw.HasFilteredList && raw.FilteredQuestionIds.Count > 0)
+            if (!string.IsNullOrWhiteSpace(rawText))
             {
-                var idSet = raw.FilteredQuestionIds.ToHashSet();
-                filtered = allQuestions.Where(q => idSet.Contains(q.Id)).ToList();
+                using var doc = JsonDocument.Parse(rawText);
+                if (doc.RootElement.TryGetProperty("keyword", out var kwProp))
+                    keyword = kwProp.GetString()?.Trim() ?? string.Empty;
+                if (doc.RootElement.TryGetProperty("requestedCount", out var countProp) && countProp.TryGetInt32(out var parsedCount))
+                    requestedCount = parsedCount;
             }
-
-            // Fallback & Guardrail: Ensure deterministic matching for topic requests
-            if (filtered is null || filtered.Count == 0)
-            {
-                var searchToken = ExtractSearchToken(request.Question);
-                if (!string.IsNullOrEmpty(searchToken))
-                {
-                    filtered = allQuestions.Where(q => 
-                        q.Question.Contains(searchToken, StringComparison.OrdinalIgnoreCase) || 
-                        (q.Hint != null && q.Hint.Contains(searchToken, StringComparison.OrdinalIgnoreCase))
-                    ).ToList();
-                }
-            }
-
-            // Guardrail: Intercept essay-style explanations and replace with clean count statement
-            if (raw.TextAnswer.Length > 150 || raw.TextAnswer.Contains("Object-Relational", StringComparison.OrdinalIgnoreCase))
-            {
-                var count = filtered?.Count ?? 0;
-                raw.TextAnswer = count > 0 
-                    ? $"Your bank currently contains {count} question(s) for this topic:"
-                    : "No matching questions were found in your bank for this topic.";
-            }
-
-            return new InterviewBankChatResponse(raw.TextAnswer, filtered);
         }
-        catch
+        catch (Exception ex)
         {
-            return new InterviewBankChatResponse("Error connecting to AI.", null);
+            logger.LogWarning(ex, "Failed to parse topic from user query. Falling back to query keyword search.");
         }
-    }
 
-    private static string ExtractSearchToken(string query)
-    {
-        var candidates = new[] { "EF Core", "Entity Framework", "SQL", "Docker", "RabbitMQ", "Microservices", "Behavioral", "C#" };
-        return candidates.FirstOrDefault(c => query.Contains(c, StringComparison.OrdinalIgnoreCase)) ?? string.Empty;
-    }
+        var searchTopic = string.IsNullOrWhiteSpace(keyword) ? request.Question.Trim() : keyword;
+        var filtered = await skills.SearchQuestionsAsync(searchTopic);
 
-    private static string CleanJsonFences(string text)
-    {
-        var cleaned = text.Trim();
-        if (cleaned.StartsWith("```"))
+        string textAnswer;
+        if (filtered.Count == 0)
         {
-            var firstNewline = cleaned.IndexOf('\n');
-            var lastBacktick = cleaned.LastIndexOf("```");
-            if (firstNewline > 0 && lastBacktick > firstNewline)
-            {
-                cleaned = cleaned.Substring(firstNewline + 1, lastBacktick - firstNewline - 1).Trim();
-            }
+            textAnswer = string.IsNullOrWhiteSpace(keyword)
+                ? "No matching questions were found in your bank."
+                : $"No questions found in your bank matching \"{keyword}\".";
         }
-
-        var openBrace = cleaned.IndexOf('{');
-        var closeBrace = cleaned.LastIndexOf('}');
-        if (openBrace >= 0 && closeBrace > openBrace)
+        else if (requestedCount.HasValue && requestedCount.Value > filtered.Count)
         {
-            cleaned = cleaned.Substring(openBrace, closeBrace - openBrace + 1);
+            textAnswer = $"Your bank only has {filtered.Count} question(s) matching \"{searchTopic}\" (you asked for {requestedCount.Value}).";
+        }
+        else
+        {
+            textAnswer = $"Found {filtered.Count} question(s) matching \"{searchTopic}\" in your bank:";
         }
 
-        return cleaned;
-    }
-
-    private class RawChatResult
-    {
-        public string TextAnswer { get; set; } = string.Empty;
-        public bool HasFilteredList { get; set; }
-        public List<Guid> FilteredQuestionIds { get; set; } = new();
+        return new InterviewBankChatResponse(textAnswer, filtered.Count > 0 ? filtered : null);
     }
 }

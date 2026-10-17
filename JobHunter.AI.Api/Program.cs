@@ -3,6 +3,8 @@ using JobHunter.AI.Api.Services;
 using JobHunter.AI.Api.Skills;
 using Npgsql;
 using Microsoft.Extensions.AI;
+using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
+using ChatResponse = Microsoft.Extensions.AI.ChatResponse;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,6 +28,7 @@ builder.Services.AddCors(options =>
 
 var ollamaEndpoint = builder.Configuration["Ollama:Endpoint"] ?? "http://localhost:11434";
 var ollamaModel = builder.Configuration["Ollama:Model"] ?? "llama3.2:latest";
+var numCtx = builder.Configuration.GetValue<int>("Ollama:NumCtx", 8192);
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
                        ?? "Host=localhost;Database=jobassistant;Username=postgres;Password=postgres";
@@ -51,7 +54,8 @@ builder.Services.AddSingleton<IChatClient>(sp =>
     var rawClient = new OllamaChatClient(new Uri(ollamaEndpoint), ollamaModel);
 
     return new ChatClientBuilder(rawClient)
-        .UseFunctionInvocation() // Automatically executes C# methods when requested by LLM
+        .Use(inner => new OllamaOptionsChatClient(inner, numCtx))
+        .UseFunctionInvocation()
         .Build();
 });
 
@@ -281,3 +285,27 @@ await InterviewRepository.InitDbAsync(dataSource);
 await ApplicationRepository.InitDbAsync(dataSource);
 
 app.Run();
+
+
+
+
+
+public class OllamaOptionsChatClient(IChatClient innerClient, int numCtx) : DelegatingChatClient(innerClient)
+{
+    public override Task<ChatResponse> GetResponseAsync(
+        IList<ChatMessage> chatMessages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        options ??= new ChatOptions();
+        options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+        
+        // Ollama API expects num_ctx inside options payload
+        if (!options.AdditionalProperties.ContainsKey("num_ctx"))
+        {
+            options.AdditionalProperties["num_ctx"] = numCtx;
+        }
+
+        return base.GetResponseAsync(chatMessages, options, cancellationToken);
+    }
+}
