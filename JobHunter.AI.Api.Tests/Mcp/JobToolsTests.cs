@@ -1,4 +1,5 @@
 using JobHunter.AI.Api.Mcp;
+using System.Security.Claims;
 using Microsoft.Extensions.Configuration;
 using Xunit;
 using ModelContextProtocol;
@@ -33,15 +34,27 @@ public class JobToolsTests
     public async Task UpdateStatus_DeniesWritesByDefault()
     {
         var configuration = new ConfigurationBuilder().Build();
-        await Assert.ThrowsAsync<McpException>(() => JobTools.UpdateApplicationStatus(null!, configuration, Guid.NewGuid(), "Saved", "Applied"));
+        await Assert.ThrowsAsync<McpException>(() => JobTools.UpdateApplicationStatus(null!, configuration, Writer(), Guid.NewGuid(), "Saved", "Applied"));
+    }
+
+    [Fact]
+    public async Task UpdateStatus_RejectsReadOnlyOrUnauthenticatedCallers()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Mcp:AllowWrites"] = "true" }).Build();
+        foreach (var caller in new ClaimsPrincipal?[] { null, new ClaimsPrincipal(), new ClaimsPrincipal(new ClaimsIdentity([
+            new Claim(ClaimTypes.Role, "McpReader")
+        ], "McpBearer")) })
+            await Assert.ThrowsAsync<McpException>(() => JobTools.UpdateApplicationStatus(null!, configuration, caller, Guid.NewGuid(), "Saved", "Applied"));
     }
 
     [Fact]
     public async Task UpdateStatus_RejectsInvalidStatusBeforeAccessingDatabase()
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Mcp:AllowWrites"] = "true" }).Build();
-        await Assert.ThrowsAsync<McpException>(() => JobTools.UpdateApplicationStatus(null!, configuration, Guid.NewGuid(), "Saved", "invalid"));
+        await Assert.ThrowsAsync<McpException>(() => JobTools.UpdateApplicationStatus(null!, configuration, Writer(), Guid.NewGuid(), "Saved", "invalid"));
     }
+
+    private static ClaimsPrincipal Writer() => new(new ClaimsIdentity([new Claim(ClaimTypes.Role, "McpWriter")], "McpBearer"));
 
     [Fact]
     public async Task MatchingJobs_RejectsOversizedCandidateBatch()

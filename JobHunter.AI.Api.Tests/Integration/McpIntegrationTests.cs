@@ -1,4 +1,5 @@
 using System.Net;
+using JobHunter.AI.Api.Security;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -51,13 +52,30 @@ public class McpIntegrationTests
         using var rejected = await host.Client.SendAsync(foreignHost);
         Assert.Equal(HttpStatusCode.Forbidden, rejected.StatusCode);
         await host.InitializeAsync();
+        // 2.4.0 runs statelessly: no MCP session can carry privileges across requests.
+        Assert.False(host.Client.DefaultRequestHeaders.Contains("Mcp-Session-Id"));
         var list = await host.RpcAsync("tools/list", new { });
         var tools = list.GetProperty("tools").EnumerateArray().ToArray();
-        Assert.Equal(new[] { "get_application_history", "get_job_analysis", "get_matching_jobs", "search_jobs", "update_application_status" },
+        Assert.Equal(new[] { "get_application_history", "get_job_analysis", "get_matching_jobs", "search_jobs" },
             tools.Select(t => t.GetProperty("name").GetString()).OrderBy(n => n, StringComparer.Ordinal).ToArray());
         var search = tools.Single(t => t.GetProperty("name").GetString() == "search_jobs");
         var properties = search.GetProperty("inputSchema").GetProperty("properties");
         Assert.Equal(new[] { "limit", "offset", "query", "status" }, properties.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+        host.UseWriteCredential();
+        var writeList = await host.RpcAsync("tools/list", new { });
+        Assert.Equal(new[] { "get_application_history", "get_job_analysis", "get_matching_jobs", "search_jobs", "update_application_status" },
+            writeList.GetProperty("tools").EnumerateArray().Select(t => t.GetProperty("name").GetString())
+                .OrderBy(n => n, StringComparer.Ordinal).ToArray());
+        host.UseReadCredential();
+
+        using var restClient = new HttpClient { BaseAddress = host.Client.BaseAddress };
+        restClient.DefaultRequestHeaders.Authorization = new("Bearer", TestHost.ReadToken);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await restClient.GetAsync("/api/auth/session")).StatusCode);
+        restClient.DefaultRequestHeaders.Authorization = new("Bearer", TestHost.WriteToken);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await restClient.GetAsync("/api/auth/session")).StatusCode);
+        restClient.DefaultRequestHeaders.Authorization = new("Bearer", TestHost.RestToken);
+        Assert.Equal(HttpStatusCode.NoContent, (await restClient.GetAsync("/api/auth/session")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await restClient.GetAsync("/mcp")).StatusCode);
     }
 
     [IntegrationFact]
@@ -81,13 +99,21 @@ public class McpIntegrationTests
         var history = await host.CallAsync("get_application_history", new { status = "Saved", limit = 1, offset = 1 });
         Assert.Equal(other, Assert.Single(history.EnumerateArray()).GetProperty("id").GetGuid());
         var args = new { applicationId = id, expectedStatus = "Saved", newStatus = "Applied" };
-        var denied = await host.RawCallAsync("update_application_status", args);
-        Assert.True(denied.GetProperty("isError").GetBoolean());
+        host.UseWriteCredential();
+        var disabled = await host.RawCallAsync("update_application_status", args);
+        Assert.True(disabled.GetProperty("isError").GetBoolean());
+        host.UseReadCredential();
         var repo = new ApplicationRepository(host.Db);
         var before = (await repo.GetByIdAsync(id))!;
         Assert.Equal("Saved", before.Status);
         Assert.Equal(0L, await host.AuditCountAsync());
         host.App.Configuration["Mcp:AllowWrites"] = "true";
+        // A read token cannot be upgraded by enabling writes or reusing HTTP requests.
+        var unauthorized = await host.RawRpcAsync("tools/call", new { name = "update_application_status", arguments = args });
+        Assert.True(unauthorized.TryGetProperty("error", out _) ||
+            (unauthorized.TryGetProperty("result", out var unauthorizedResult) && unauthorizedResult.TryGetProperty("isError", out var isError) && isError.GetBoolean()));
+        Assert.Equal(0L, await host.AuditCountAsync());
+        host.UseWriteCredential();
         Assert.True((await host.CallAsync("update_application_status", args)).GetProperty("updated").GetBoolean());
         var after = (await repo.GetByIdAsync(id))!;
         Assert.Equal(before with { Status = "Applied", UpdatedAt = after.UpdatedAt }, after);
@@ -148,7 +174,9 @@ public class McpIntegrationTests
         public WebApplication App { get; }
         public HttpClient Client { get; private set; } = null!;
         private Guid _resumeId;
-        private const string Token = "integration-only-token-not-for-real-use-123456";
+        public const string ReadToken = "integration-only-token-not-for-real-use-123456";
+        public static readonly string WriteToken = new('b', 64);
+        public static readonly string RestToken = new('c', 64);
         private TestHost(NpgsqlDataSource admin, string schema, NpgsqlDataSource db, WebApplication app)
             => (_admin, _schema, Db, App) = (admin, schema, db, app);
 
@@ -165,7 +193,8 @@ public class McpIntegrationTests
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Integration", Args = [] });
             builder.WebHost.UseUrls("http://127.0.0.1:0");
             builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
-                ["Mcp:Enabled"] = enabled.ToString(), ["Mcp:Token"] = Token, ["Mcp:AllowWrites"] = "false" });
+                ["Mcp:Enabled"] = enabled.ToString(), ["Mcp:Token"] = ReadToken, ["Mcp:WriteToken"] = WriteToken,
+                ["Mcp:AllowWrites"] = "false", ["RestAuth:Token"] = RestToken });
             builder.Services.AddSingleton(db);
             builder.Services.AddScoped<ApplicationRepository>();
             builder.Services.AddScoped<ResumeRepository>();
@@ -191,6 +220,8 @@ public class McpIntegrationTests
             {
                 app.UseJobHunterMcp();
                 app.UseRouting();
+                app.UseRestAccess();
+                app.MapGet("/api/auth/session", () => Microsoft.AspNetCore.Http.Results.NoContent());
                 await ResumeRepository.InitDbAsync(db);
                 await ApplicationRepository.InitDbAsync(db);
                 var cache = app.Services.GetRequiredService<AtsAnalysisCache>();
@@ -201,13 +232,16 @@ public class McpIntegrationTests
                 await app.StartAsync();
                 var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
                 host.Client = new HttpClient { BaseAddress = new Uri(address), Timeout = TimeSpan.FromSeconds(60) };
-                host.Client.DefaultRequestHeaders.Authorization = new("Bearer", Token);
+                host.UseReadCredential();
                 host.Client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                 host.Client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
                 return host;
             }
             catch { await host.DisposeAsync(); throw; }
         }
+
+        public void UseReadCredential() => Client.DefaultRequestHeaders.Authorization = new("Bearer", ReadToken);
+        public void UseWriteCredential() => Client.DefaultRequestHeaders.Authorization = new("Bearer", WriteToken);
 
         public async Task<Guid> SeedAsync(string company, string? description, int priority)
         {
@@ -233,7 +267,9 @@ public class McpIntegrationTests
             using var response = await Client.PostAsJsonAsync("/mcp", new { jsonrpc = "2.0", method = "notifications/initialized" });
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         }
-        public async Task<JsonElement> RpcAsync(string method, object parameters)
+        public async Task<JsonElement> RpcAsync(string method, object parameters) => Result(await RawRpcAsync(method, parameters));
+
+        public async Task<JsonElement> RawRpcAsync(string method, object parameters)
         {
             var id = ++_id;
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
@@ -250,12 +286,12 @@ public class McpIntegrationTests
                     if (!line.StartsWith("data:")) continue;
                     using var doc = JsonDocument.Parse(line[5..].Trim());
                     if (doc.RootElement.TryGetProperty("id", out var replyId) && replyId.ValueKind == JsonValueKind.Number && replyId.GetInt32() == id)
-                        return Result(doc.RootElement);
+                        return doc.RootElement.Clone();
                 }
                 throw new InvalidOperationException("No matching MCP response received.");
             }
             using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cts.Token));
-            return Result(json.RootElement);
+            return json.RootElement.Clone();
         }
         private static JsonElement Result(JsonElement root)
         {

@@ -1,4 +1,6 @@
 using System.Net;
+using System.Security.Claims;
+using JobHunter.AI.Api.Security;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Unicode;
@@ -14,10 +16,30 @@ public static class McpExtensions
     public static void AddJobHunterMcp(this WebApplicationBuilder builder)
     {
         if (!builder.Configuration.GetValue<bool>("Mcp:Enabled")) return;
-        var token = builder.Configuration["Mcp:Token"];
-        if (string.IsNullOrWhiteSpace(token) || token.Length < 32)
+        ValidateCredentials(builder.Configuration);
+        builder.Services.AddAuthorization();
+        // Pin the SDK 2.4.0 stateless HTTP mode: no long-lived MCP sessions can carry privileges.
+        builder.Services.AddMcpServer()
+            .WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
+            .AddAuthorizationFilters()
+            .WithToolsFromAssembly(serializerOptions: CreateToolJsonOptions());
+    }
+
+    internal static void ValidateCredentials(IConfiguration configuration)
+    {
+        var readToken = configuration["Mcp:Token"];
+        if (string.IsNullOrWhiteSpace(readToken) || readToken.Length < 32)
             throw new InvalidOperationException("MCP requires a randomly generated token of at least 32 characters.");
-        builder.Services.AddMcpServer().WithHttpTransport().WithToolsFromAssembly(serializerOptions: CreateToolJsonOptions());
+
+        var writeToken = configuration["Mcp:WriteToken"];
+        if (!string.IsNullOrEmpty(writeToken) &&
+            (!RestAccess.IsValidToken(writeToken) ||
+             string.Equals(writeToken, readToken, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(writeToken, configuration["RestAuth:Token"], StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("Mcp:WriteToken must be a separate 64-character hexadecimal credential, distinct from the MCP read and REST tokens.");
+
+        if (configuration.GetValue<bool>("Mcp:AllowWrites") && string.IsNullOrEmpty(writeToken))
+            throw new InvalidOperationException("Mcp:AllowWrites requires a separate Mcp:WriteToken.");
     }
 
     internal static JsonSerializerOptions CreateToolJsonOptions() => new(McpJsonUtilities.DefaultOptions)
@@ -29,7 +51,10 @@ public static class McpExtensions
     public static void UseJobHunterMcp(this WebApplication app)
     {
         if (!app.Configuration.GetValue<bool>("Mcp:Enabled")) return;
-        var expected = SHA256.HashData(Encoding.UTF8.GetBytes(app.Configuration["Mcp:Token"]!));
+        var expectedRead = SHA256.HashData(Encoding.UTF8.GetBytes(app.Configuration["Mcp:Token"]!));
+        var configuredWriteToken = app.Configuration["Mcp:WriteToken"];
+        var expectedWrite = string.IsNullOrEmpty(configuredWriteToken) ? null :
+            SHA256.HashData(Encoding.UTF8.GetBytes(configuredWriteToken));
         app.Use(async (context, next) =>
         {
             if (!context.Request.Path.StartsWithSegments("/mcp")) { await next(); return; }
@@ -45,13 +70,28 @@ public static class McpExtensions
             context.Response.Headers.CacheControl = "no-store";
             var authorization = context.Request.Headers.Authorization;
             var auth = authorization.ToString();
-            if (authorization.Count != 1 || auth.Length > 4096 || !auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ||
-                !CryptographicOperations.FixedTimeEquals(expected, SHA256.HashData(Encoding.UTF8.GetBytes(auth[7..]))))
+            if (authorization.Count != 1 || auth.Length > 4096 ||
+                !auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             {
                 context.Response.StatusCode = 401;
                 context.Response.Headers.WWWAuthenticate = "Bearer";
                 return;
             }
+            var actual = SHA256.HashData(Encoding.UTF8.GetBytes(auth[7..]));
+            var isRead = CryptographicOperations.FixedTimeEquals(expectedRead, actual);
+            var isWrite = expectedWrite is not null && CryptographicOperations.FixedTimeEquals(expectedWrite, actual);
+            if (!isRead && !isWrite)
+            {
+                context.Response.StatusCode = 401;
+                context.Response.Headers.WWWAuthenticate = "Bearer";
+                return;
+            }
+            var role = isWrite ? "McpWriter" : "McpReader";
+            // NameIdentifier also binds SDK stateful sessions to this credential class if enabled later.
+            context.User = new ClaimsPrincipal(new ClaimsIdentity([
+                new Claim(ClaimTypes.NameIdentifier, isWrite ? "jobhunter-mcp-writer" : "jobhunter-mcp-reader"),
+                new Claim(ClaimTypes.Role, role)
+            ], authenticationType: "McpBearer"));
             await next();
         });
     }

@@ -88,14 +88,14 @@ MCP matching returns partial results with `timedOut`, `message`, and `nextOffset
 
 The existing application repository's generic update overwrites several nullable fields. The MCP-specific status operation intentionally uses a separate atomic SQL statement to avoid those side effects. It creates an additive `ApplicationStatusAudit` table during existing database initialization; only MCP updates are audited in this preview.
 
-After backing up your database, use a test record. Enable writes explicitly with `dotnet user-secrets set "Mcp:AllowWrites" "true" --project JobHunter.AI.Api` and restart. Call `update_application_status` with the actual ID, expected current status and new status. Confirm with the user before triggering any write from a client. Check the record in the Web App and verify its other fields are unchanged. Repeat with the old expected status and verify the write is rejected. Disable writes again and restart. This opt-in setting authorizes any client holding the token to call the write tool; it is not per-user approval or separate write credentials.
+After backing up your database, use a disposable test record. Configure an independent `Mcp:WriteToken` (see Stage 6.3 below), explicitly enable `Mcp:AllowWrites`, and restart. Call `update_application_status` using the write token with the actual ID, expected current status and new status. Confirm with the user before triggering any write from a client. Check other application fields remain unchanged and the audit row exists. Repeat with the stale expected status to confirm no second write. Disable writes again and restart. A read token must never authorize this operation.
 
 ## Acceptance checklist (not executed when this patch was authored)
 
 - [ ] Restore, build and existing + new unit tests pass.
 - [ ] With MCP disabled, `/mcp` is absent and existing Web App workflows still work.
 - [ ] With MCP enabled, missing/wrong bearer token returns 401; non-local requests or Origin headers return 403.
-- [ ] The MCP client lists exactly five tools; DI dependencies and CancellationToken are not exposed as tool inputs.
+- [ ] The read-only MCP client lists four read tools; the write-authorized client lists all five. DI dependencies, ClaimsPrincipal and CancellationToken are not tool inputs.
 - [ ] Search and history return bounded, correct pages; invalid parameters produce errors.
 - [ ] ATS analysis matches the existing REST analysis behavior, subject to model variability.
 - [ ] Matching ranks only the requested Saved page and reports skipped records.
@@ -104,7 +104,7 @@ After backing up your database, use a test record. Enable writes explicitly with
 
 ## Remaining before release
 
-Integration and regression tests with real PostgreSQL and MCP clients, dependency compatibility verification, REST authentication and deployment hardening, separate write authorization, rate limits, prompt-injection testing, output size limits, ATS quality improvements, cache integration tests and cold-analysis timeout handling, full status history, packaging and registry registration. Remote OAuth is intentionally deferred until the existing unauthenticated REST surface is secured. Do not publish this preview as production-ready.
+Real-client compatibility, rate limits, prompt-injection testing, output size limits, ATS quality improvements, cold-analysis timeout handling, full status history, packaging and registry registration remain before release. REST authentication and MCP read/write credentials are separate local protections, not remote OAuth or production-ready multi-user security. Do not expose this local preview publicly.
 
 ## Stage 3.1 refinements
 
@@ -131,3 +131,23 @@ dotnet test JobHunter.AI.slnx
 Wait for PostgreSQL readiness before running tests. Each test uses its own random schema, which is dropped on normal fixture disposal. The database name must be `jobhunter_integration` and host must be loopback. Never point this variable at a real data store. Without the environment variable, integration tests are explicitly skipped and unit tests still run. GitHub Actions provisions a separate PostgreSQL 16 service and explicitly runs both suites. Local cleanup: `docker rm -f jobhunter-integration-pg` and `set JOBHUNTER_INTEGRATION_DB=`. Only remove the dedicated test container. No user secrets changes are needed.
 
 Coverage: missing/wrong token, Origin and Host rejection, disabled endpoint, tool discovery and search input schema, Persian data round-trip, search/history paging, write denial, successful and stale status changes with field preservation and audit rows, real PostgreSQL cache hit, description invalidation, expiration and cleanup, matching with incomplete records. Live provider accuracy, remote network tests, concurrent mutation races, and full production security remain outside this suite.
+
+## Stage 6.3 — MCP write authorization (local-only)
+
+This stage targets `ModelContextProtocol.AspNetCore` **2.4.0** and explicitly pins Streamable HTTP to **stateless** mode. Each HTTP request is authenticated independently. `Mcp:Token` remains the existing backward-compatible read token; a separate `Mcp:WriteToken` (exactly 64 hexadecimal characters) grants write-role access. The REST bearer is a third, distinct credential. All credentials are checked server-side; they must not be stored in source control.
+
+Generate a NEW credential (do **not** reuse either the REST token or `Mcp:Token`):
+
+```cmd
+python -c "import secrets; print(secrets.token_hex(32))"
+dotnet user-secrets set "Mcp:WriteToken" "PASTE_NEW_64_HEX_HERE" --project JobHunter.AI.Api
+dotnet user-secrets set "Mcp:AllowWrites" "true" --project JobHunter.AI.Api
+```
+
+Restart the API after configuring credentials. Keep `Mcp:AllowWrites=false` unless a controlled write test or personal workflow needs it. When `Mcp:AllowWrites=true` without `Mcp:WriteToken`, startup fails. Malformed or reused write credentials also fail startup. A configured write token can read even when writes are disabled, but cannot mutate until the explicit flag is enabled. To disable writes: `dotnet user-secrets set "Mcp:AllowWrites" "false" --project JobHunter.AI.Api`, then restart. Removing `Mcp:WriteToken` and restarting revokes the write credential. The original read credential continues to work for read operations.
+
+For a write-capable MCP client, use the same local `/mcp` endpoint and send `Authorization: Bearer <Mcp:WriteToken>` instead of the read token. Do not put real credentials in committed MCP client settings. Read-token clients discover only four read tools; write-token clients discover all five. The write-only tool `update_application_status` is guarded by the SDK authorization filter, an independent in-tool role check, and `Mcp:AllowWrites`. Its atomic compare-and-set and audit record remain unchanged. Tool discovery is not itself authorization.
+
+The SDK is configured without HTTP sessions, so an `Mcp-Session-Id` cannot carry or elevate privileges. The SDK's request identity is derived from the currently authenticated bearer credential; no write privilege is persisted in a session. Stateless operation does not imply OAuth, remote access, or automatic approval of mutations. Each requested status change still needs an explicit expected status and the client's informed confirmation.
+
+Stage 6.3 regression checks: read token can call `search_jobs` and is denied on `update_application_status`, even with `AllowWrites=true`; write token cannot mutate with `AllowWrites=false`; valid write token succeeds after opt-in; stale status does not create a second audit row; REST credentials are rejected by MCP and vice versa; no session identifier is issued. Test with the disposable PostgreSQL setup above, not a real application database.

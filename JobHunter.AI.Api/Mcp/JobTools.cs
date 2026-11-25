@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 using ModelContextProtocol.Server;
@@ -108,11 +110,15 @@ public static class JobTools
     }
 
     [McpServerTool(Name = "update_application_status", ReadOnly = false), Description("Change only the status of one existing application. Requires explicitly enabled write access and the current expected status. Does not submit applications.")]
+    [Authorize(Roles = "McpWriter")]
     public static async Task<StatusUpdateResult> UpdateApplicationStatus(ApplicationRepository repository,
-        IConfiguration configuration, Guid applicationId, string expectedStatus, string newStatus,
+        IConfiguration configuration, ClaimsPrincipal? caller, Guid applicationId, string expectedStatus, string newStatus,
         CancellationToken cancellationToken = default)
     {
         if (!configuration.GetValue<bool>("Mcp:AllowWrites")) throw new McpException("MCP write access is disabled.");
+        // Defense in depth: independent of SDK discovery/authorization filters and HTTP sessions.
+        if (caller?.Identity?.IsAuthenticated != true || !caller.IsInRole("McpWriter"))
+            throw new McpException("MCP write credential is required.");
         if (applicationId == Guid.Empty || string.IsNullOrWhiteSpace(expectedStatus) || string.IsNullOrWhiteSpace(newStatus))
             throw new McpException("Application ID and both statuses are required.");
         ValidateStatus(expectedStatus);
