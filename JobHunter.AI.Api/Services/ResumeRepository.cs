@@ -21,14 +21,14 @@ CREATE TABLE IF NOT EXISTS ""Resumes"" (
         await cmd.ExecuteNonQueryAsync();
     }
 
-    public async Task<List<ResumeSummary>> GetAllAsync()
+    public async Task<List<ResumeSummary>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var list = new List<ResumeSummary>();
         var sql = @"SELECT ""Id"", ""Name"", ""WordCount"", ""IsDefault"", ""CreatedAt"", ""UpdatedAt""
                     FROM ""Resumes"" ORDER BY ""IsDefault"" DESC, ""CreatedAt"" DESC";
         await using var cmd = db.CreateCommand(sql);
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
         {
             list.Add(new ResumeSummary(
                 reader.GetGuid(0),
@@ -42,14 +42,14 @@ CREATE TABLE IF NOT EXISTS ""Resumes"" (
         return list;
     }
 
-    public async Task<ResumeDetail?> GetByIdAsync(Guid id)
+    public async Task<ResumeDetail?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var sql = @"SELECT ""Id"", ""Name"", ""Content"", ""WordCount"", ""IsDefault"", ""CreatedAt"", ""UpdatedAt""
                     FROM ""Resumes"" WHERE ""Id"" = $1";
         await using var cmd = db.CreateCommand(sql);
         cmd.Parameters.AddWithValue(id);
-        await using var reader = await cmd.ExecuteReaderAsync();
-        if (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        if (await reader.ReadAsync(cancellationToken))
         {
             return new ResumeDetail(
                 reader.GetGuid(0),

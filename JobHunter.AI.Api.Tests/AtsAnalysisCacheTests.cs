@@ -46,11 +46,11 @@ public class AtsAnalysisCacheTests
         var second = await service.AnalyzeAsync("C# developer", "Backend role requiring C#");
 
         Assert.NotNull(first);
-        Assert.Equal(85, first.AtsScore);
+        Assert.Equal(100, first.AtsScore);
         Assert.Same(first, second);
         Assert.Equal(1, cache.Stores);
         chat.Verify(c => c.GetResponseAsync(It.IsAny<IEnumerable<AiChatMessage>>(),
-            It.IsAny<ChatOptions?>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+            It.IsAny<ChatOptions?>(), It.IsAny<CancellationToken>()), Times.Once());
     }
 
     [Fact]

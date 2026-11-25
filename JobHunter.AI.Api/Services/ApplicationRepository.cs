@@ -94,7 +94,7 @@ WHERE 1=1";
         return list;
     }
 
-    public async Task<ApplicationDetail?> GetByIdAsync(Guid id)
+    public async Task<ApplicationDetail?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var sql = @"SELECT a.""Id"", a.""CompanyName"", a.""Position"", a.""JobUrl"", a.""JobDescription"", a.""Source"", a.""ResumeVersion"", a.""ResumeId"", r.""Name"", a.""Status"", a.""AtsScore"", a.""Notes"", a.""AppliedAt"", a.""CreatedAt"", a.""UpdatedAt"", a.""Priority""
 FROM ""Applications"" a
@@ -102,8 +102,8 @@ LEFT JOIN ""Resumes"" r ON r.""Id"" = a.""ResumeId""
 WHERE a.""Id"" = $1";
         await using var cmd = db.CreateCommand(sql);
         cmd.Parameters.AddWithValue(id);
-        await using var reader = await cmd.ExecuteReaderAsync();
-        if (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        if (await reader.ReadAsync(cancellationToken))
         {
             return new ApplicationDetail(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2),

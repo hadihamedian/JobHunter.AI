@@ -105,27 +105,27 @@ app.MapPost("/api/applications/chat", async (DataChatRequest req, DataChatAgent 
 
 // === DETERMINISTIC PIPELINE ENDPOINTS ===
 
-app.MapPost("/api/analyze", async (AnalyzeRequest request, [FromServices] AiAnalyzerService analyzer) =>
+app.MapPost("/api/analyze", async (AnalyzeRequest request, [FromServices] AiAnalyzerService analyzer, CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(request.ResumeContent) || string.IsNullOrWhiteSpace(request.JobDescription))
         return Results.BadRequest("Resume and job description are required.");
 
-    var result = await analyzer.AnalyzeAsync(request.ResumeContent, request.JobDescription);
+    var result = await analyzer.AnalyzeAsync(request.ResumeContent, request.JobDescription, cancellationToken);
     return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
 });
 
 app.MapPost("/api/analyze-by-id", async (
     AnalyzeByIdRequest req,
     ResumeRepository resumeRepo,
-    AiAnalyzerService analyzer) =>
+    AiAnalyzerService analyzer, CancellationToken cancellationToken) =>
 {
     if (req.ResumeId == Guid.Empty || string.IsNullOrWhiteSpace(req.JobDescription))
         return Results.BadRequest("ResumeId and JobDescription are required.");
 
-    var resume = await resumeRepo.GetByIdAsync(req.ResumeId);
+    var resume = await resumeRepo.GetByIdAsync(req.ResumeId, cancellationToken);
     if (resume is null) return Results.NotFound("Resume not found.");
 
-    var result = await analyzer.AnalyzeAsync(resume.Content, req.JobDescription);
+    var result = await analyzer.AnalyzeAsync(resume.Content, req.JobDescription, cancellationToken);
     return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
 });
 

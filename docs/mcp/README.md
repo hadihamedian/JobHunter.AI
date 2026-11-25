@@ -56,7 +56,7 @@ Start the server from the MCP configuration and inspect its tool list. Client co
 | get_matching_jobs | ATS ranking (cached or freshly computed) for a page of up to five Saved records, using an explicit or default resume. Returns examined count, next offset and skipped IDs. Not a global ranking. |
 | update_application_status | Write-disabled by default. Compare-and-set status only, with an atomic MCP audit insert. Does not send an application or change other fields. |
 
-Example calls: `search_jobs(query: ".NET", limit: 10)`, `get_matching_jobs(minScore: 70, candidateLimit: 3)`, `get_job_analysis(applicationId: "<existing UUID>")`. For analysis the job must have a stored description, and Ollama must be running. AI scores are estimates and may be influenced by untrusted job text. Resume and description input limits are 16,000 characters each; model context may impose a lower limit. AI calls are serialized across MCP requests and bounded by a cancellation deadline; existing REST AI calls are not included in this gate.
+Example calls: `search_jobs(query: ".NET", limit: 10)`, `get_matching_jobs(minScore: 70, candidateLimit: 3)`, `get_job_analysis(applicationId: "<existing UUID>")`. For analysis the job must have a stored description, and Ollama must be running. AI scores are estimates and may be influenced by untrusted job text. Resume and description input limits are 16,000 characters each; model context may impose a lower limit. ATS cache misses are serialized across REST and MCP in one API process. MCP analysis uses a cooperative 45-second deadline. Other AI features do not use this ATS gate.
 
 ## Shared ATS analysis cache
 
@@ -67,7 +67,7 @@ The existing REST analysis endpoints and both AI-heavy MCP tools share a Postgre
 - If model weights change under the same Ollama tag, change `AtsCache:ModelRevision` and restart. Bump `AlgorithmVersion` when changing ATS prompts, skill matching or scoring. TTL is measured from the successful write, not extended by reads.
 - Null/malformed results and out-of-range scores are not cached. This does not validate the semantic accuracy of a model-generated score; quality fixes are separate.
 - Expired rows are excluded from reads and physically removed at startup or a subsequent successful write (not by a background scheduler). The cache is scoped to the existing single-user deployment; tenant isolation and deletion/retention policy are required before multi-user use.
-- The existing MCP AI gate is unchanged; simultaneous REST misses are not deduplicated. Cold analysis can still exceed a client's 60-second timeout.
+- The shared ATS gate rechecks cache after acquiring the lock. Concurrent misses with identical inputs reuse successful cached results when caching works. Cold analysis can still exceed the budget if the provider delays cancellation.
 
 To disable caching: `dotnet user-secrets set "AtsCache:Enabled" "false" --project JobHunter.AI.Api` and restart. To validate, call `get_job_analysis` twice with the same valid job and resume, using a sufficiently fast Ollama model. Expect `ATS cache MISS` then `ATS cache STORED` for the first call and `ATS cache HIT` for the second. If a client times out, check server logs and the configured client deadline; do not repeatedly submit slow requests. Confirm a cache hit after API restart. On a disposable record, change the description and confirm a fresh miss.
 
@@ -77,6 +77,12 @@ Inspect metadata only (avoid exposing derived personal data):
 SELECT "CreatedAt", "ExpiresAt" FROM "AtsAnalysisCache"
 ORDER BY "CreatedAt" DESC LIMIT 5;
 ```
+
+## Stage 3 reliability
+
+ATS v2 uses equal-weight coverage of extracted requirements, rounded down. The model no longer determines the numeric score. Unknown or contradictory experience classifications count as missing; exact duplicates are removed. Skill-only analysis avoids the second model call and produces fallback suggestions for gaps. Mandatory skill classification is unavailable for skill-only jobs (critical list is empty). This is an estimate, not a calibrated employer ATS score. Old cache keys are invalidated, but historical stored application scores are not rewritten.
+
+MCP matching returns partial results with `timedOut`, `message`, and `nextOffset` when its cooperative 45-second budget expires. Retry from the returned offset; if no candidates complete, use a faster model or pre-analyze in the Web App with the same resume. The REST analysis calls now propagate request cancellation. Expected validation errors use McpException with safe messages; unexpected infrastructure errors remain generic. No background processing or cross-process deduplication is provided.
 
 ## Write test (disposable database only)
 

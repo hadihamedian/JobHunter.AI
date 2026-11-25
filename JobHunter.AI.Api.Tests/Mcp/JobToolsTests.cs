@@ -1,6 +1,7 @@
 using JobHunter.AI.Api.Mcp;
 using Microsoft.Extensions.Configuration;
 using Xunit;
+using ModelContextProtocol;
 
 namespace JobHunter.AI.Api.Tests.Mcp;
 
@@ -13,38 +14,38 @@ public class JobToolsTests
     [InlineData(10, 100001)]
     public void SearchJobs_RejectsInvalidPagination(int limit, int offset)
     {
-        Assert.Throws<ArgumentException>(() => { _ = JobTools.SearchJobs(null!, limit: limit, offset: offset); });
+        Assert.Throws<McpException>(() => { _ = JobTools.SearchJobs(null!, limit: limit, offset: offset); });
     }
 
     [Fact]
     public void SearchJobs_RejectsInvalidStatus()
     {
-        Assert.Throws<ArgumentException>(() => { _ = JobTools.SearchJobs(null!, status: "invalid"); });
+        Assert.Throws<McpException>(() => { _ = JobTools.SearchJobs(null!, status: "invalid"); });
     }
 
     [Fact]
     public void SearchJobs_RejectsOversizedQuery()
     {
-        Assert.Throws<ArgumentException>(() => { _ = JobTools.SearchJobs(null!, query: new string('x', 301)); });
+        Assert.Throws<McpException>(() => { _ = JobTools.SearchJobs(null!, query: new string('x', 301)); });
     }
 
     [Fact]
     public async Task UpdateStatus_DeniesWritesByDefault()
     {
         var configuration = new ConfigurationBuilder().Build();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => JobTools.UpdateApplicationStatus(null!, configuration, Guid.NewGuid(), "Saved", "Applied"));
+        await Assert.ThrowsAsync<McpException>(() => JobTools.UpdateApplicationStatus(null!, configuration, Guid.NewGuid(), "Saved", "Applied"));
     }
 
     [Fact]
     public async Task UpdateStatus_RejectsInvalidStatusBeforeAccessingDatabase()
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Mcp:AllowWrites"] = "true" }).Build();
-        await Assert.ThrowsAsync<ArgumentException>(() => JobTools.UpdateApplicationStatus(null!, configuration, Guid.NewGuid(), "Saved", "invalid"));
+        await Assert.ThrowsAsync<McpException>(() => JobTools.UpdateApplicationStatus(null!, configuration, Guid.NewGuid(), "Saved", "invalid"));
     }
 
     [Fact]
     public async Task MatchingJobs_RejectsOversizedCandidateBatch()
     {
-        await Assert.ThrowsAsync<ArgumentException>(() => JobTools.GetMatchingJobs(null!, null!, null!, candidateLimit: 6));
+        await Assert.ThrowsAsync<McpException>(() => JobTools.GetMatchingJobs(null!, null!, null!, candidateLimit: 6));
     }
 }

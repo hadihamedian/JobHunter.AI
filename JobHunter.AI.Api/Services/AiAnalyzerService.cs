@@ -9,22 +9,38 @@ namespace JobHunter.AI.Api.Services;
 
 public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsTools, IAtsAnalysisCache? cache = null)
 {
+    private static readonly SemaphoreSlim AnalysisGate = new(1, 1);
+
     public async Task<AnalyzeResult?> AnalyzeAsync(string resume, string jobDesc, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (cache is null || !cache.Enabled)
-            return await AnalyzeCoreAsync(resume, jobDesc, cancellationToken);
+        var activeCache = cache is not null && cache.Enabled ? cache : null;
+        var key = activeCache?.CreateKey(resume, jobDesc);
+        if (activeCache is not null)
+        {
+            var cached = await activeCache.TryGetAsync(key!, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (AtsAnalysisCache.IsCacheable(cached)) return cached;
+        }
 
-        var key = cache.CreateKey(resume, jobDesc);
-        var cached = await cache.TryGetAsync(key, cancellationToken);
-        if (AtsAnalysisCache.IsCacheable(cached)) return cached;
-
-        var result = await AnalyzeCoreAsync(resume, jobDesc, cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (AtsAnalysisCache.IsCacheable(result))
-            await cache.TryStoreAsync(key, result!, cancellationToken);
-
-        return result;
+        await AnalysisGate.WaitAsync(cancellationToken);
+        try
+        {
+            // Recheck after acquiring the process-wide gate: another request may have filled it.
+            if (activeCache is not null)
+            {
+                var cached = await activeCache.TryGetAsync(key!, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (AtsAnalysisCache.IsCacheable(cached)) return cached;
+            }
+            var result = await AnalyzeCoreAsync(resume, jobDesc, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (activeCache is not null && AtsAnalysisCache.IsCacheable(result))
+                await activeCache.TryStoreAsync(key!, result!, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            return result;
+        }
+        finally { AnalysisGate.Release(); }
     }
 
     private async Task<AnalyzeResult?> AnalyzeCoreAsync(string resume, string jobDesc, CancellationToken cancellationToken)
@@ -34,9 +50,14 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
         if (requirements is null || requirements.Count == 0) return null;
 
         requirements = requirements
-            .GroupBy(r => r.Text.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Where(r => r is not null && !string.IsNullOrWhiteSpace(r.Text)
+                && r.Type is "skill" or "experience")
+            .Select(r => new RequirementItem { Text = r.Text.Trim(), Type = r.Type })
+            .GroupBy(r => r.Text, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
+
+        if (requirements.Count == 0) return null;
 
         // Stage 2: Deterministic verification via AtsEvaluationTools
         var matchingSkills = new List<string>();
@@ -45,6 +66,7 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
 
         foreach (var req in requirements)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (req.Type == "experience")
             {
                 experienceRequirements.Add(req);
@@ -57,7 +79,11 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
                 missingSkills.Add(req.Text);
         }
 
-        // Stage 3: LLM reasoning for experience calculation and final score
+        // No experience requirements: avoid a second model call entirely.
+        if (experienceRequirements.Count == 0)
+            return BuildResult(matchingSkills, missingSkills, [], []);
+
+        // Stage 3: LLM reasoning only for experience classification.
         return await FinalizeAsync(resume, experienceRequirements, matchingSkills, missingSkills, cancellationToken);
     }
 
@@ -92,7 +118,8 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
 
         var options = new ChatOptions
         {
-            Temperature = 0.0f
+            Temperature = 0.0f,
+            ResponseFormat = ChatResponseFormat.Json
         };
 
         var response = await chatClient.GetResponseAsync(messages, options, cancellationToken);
@@ -142,11 +169,10 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
             Resume (use this ONLY to evaluate the experience requirements above):
             {{resume}}
 
-            For each experience requirement: look at ALL job entries in the resume's work history, calculate the duration of each from start/end dates, and SUM them. If the total meets or exceeds the required number, it is met.
+            For each experience requirement, evaluate only relevant dated work history. Do not double-count overlapping dates. Return the exact requirement text, never job titles. Uncertain evidence belongs in experienceNotMet.
 
             Return ONLY this JSON, no explanation, no markdown fences:
             {
-              "atsScore": <number 0-100>,
               "experienceMet": ["<satisfied experience requirement>"],
               "experienceNotMet": ["<unmet experience requirement>"],
               "criticalMissingSkills": ["<subset of absent skills or unmet experience that are mandatory>"],
@@ -161,7 +187,8 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
 
         var options = new ChatOptions
         {
-            Temperature = 0.0f
+            Temperature = 0.0f,
+            ResponseFormat = ChatResponseFormat.Json
         };
 
         var response = await chatClient.GetResponseAsync(messages, options, cancellationToken);
@@ -177,21 +204,44 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
             var raw = JsonSerializer.Deserialize<FinalizeResult>(rawText, jsonOptions);
             if (raw is null) return null;
 
-            var finalMatching = matchingSkills.Concat(raw.ExperienceMet).ToList();
-            var finalMissing = missingSkills.Concat(raw.ExperienceNotMet).ToList();
-
-            return new AnalyzeResult(
-                raw.AtsScore,
-                finalMatching,
-                finalMissing,
-                raw.CriticalMissingSkills,
-                raw.Suggestions
-            );
+            // Only exact extracted requirements can be classified by the model.
+            var met = (raw.ExperienceMet ?? []).Where(v => !string.IsNullOrWhiteSpace(v))
+                .Select(v => v.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var notMet = (raw.ExperienceNotMet ?? []).Where(v => !string.IsNullOrWhiteSpace(v))
+                .Select(v => v.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var requirement in experienceRequirements)
+            {
+                if (met.Contains(requirement.Text) && !notMet.Contains(requirement.Text))
+                    matchingSkills.Add(requirement.Text);
+                else
+                    missingSkills.Add(requirement.Text);
+            }
+            return BuildResult(matchingSkills, missingSkills,
+                raw.CriticalMissingSkills ?? [], raw.Suggestions ?? []);
         }
         catch
         {
             return null;
         }
+    }
+
+    private static AnalyzeResult BuildResult(List<string> matching, List<string> missing,
+        List<string> critical, List<string> suggestions)
+    {
+        var absent = missing.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var absentSet = absent.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var present = matching.Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(v => !absentSet.Contains(v)).ToList();
+        var total = present.Count + absent.Count;
+        // Equal-weight coverage estimate, not an employer's ATS score.
+        var score = total == 0 ? 0 : (int)Math.Floor(100.0 * present.Count / total);
+        var criticalMissing = critical.Where(v => v is not null && absentSet.Contains(v.Trim()))
+            .Select(v => v.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var advice = suggestions.Where(v => !string.IsNullOrWhiteSpace(v))
+            .Select(v => v.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Take(4).ToList();
+        if (advice.Count == 0)
+            advice = absent.Take(4).Select(v => $"Review {v}; add evidence only if you have relevant experience.").ToList();
+        return new AnalyzeResult(score, present, absent, criticalMissing, advice);
     }
 
     private static string CleanJsonFences(string text)
@@ -222,7 +272,6 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
 
     private class FinalizeResult
     {
-        public int AtsScore { get; set; }
         public List<string> ExperienceMet { get; set; } = new();
         public List<string> ExperienceNotMet { get; set; } = new();
         public List<string> CriticalMissingSkills { get; set; } = new();
