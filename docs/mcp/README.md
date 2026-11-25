@@ -113,3 +113,21 @@ ATS v3 excludes requirements without letters (including bare numeric thresholds)
 ## Persian output readability
 
 MCP tool serialization uses a copy of the SDK default JSON options with a restricted Unicode encoder allowing Arabic-script text (including Persian). Property names, tool contracts and security-sensitive escaping are retained. This does not translate content or change REST serialization. Some characters (including zero-width marks) may still be escaped, and the transport envelope or Inspector may independently escape Unicode. Escaped JSON is semantically equivalent to literal Unicode. Verify by searching a stored record with a Persian company name and checking its decoded value; test an English record and tool discovery as regression checks.
+
+
+## Stage 5: automated integration tests
+
+The integration tests start a real loopback Kestrel host with the production MCP extensions, repositories and ATS cache. They use raw MCP Streamable HTTP JSON-RPC requests (initialize, session headers, tools/list and tools/call). The host reproduces the relevant registrations, not the entire Program.cs startup. AI responses are deterministic mocks; neither Ollama nor the existing application database is required. Existing controlled timeout/cancellation unit tests remain separate; live Ollama cancellation and full application startup regression still require acceptance tests.
+
+From Windows CMD at the solution root, start a dedicated disposable PostgreSQL container:
+
+```cmd
+docker run --name jobhunter-integration-pg -e POSTGRES_PASSWORD=integration-only -e POSTGRES_DB=jobhunter_integration -p 127.0.0.1:55432:5432 -d postgres:16
+docker exec jobhunter-integration-pg pg_isready -U postgres -d jobhunter_integration
+set "JOBHUNTER_INTEGRATION_DB=Host=127.0.0.1;Port=55432;Database=jobhunter_integration;Username=postgres;Password=integration-only"
+dotnet test JobHunter.AI.slnx
+```
+
+Wait for PostgreSQL readiness before running tests. Each test uses its own random schema, which is dropped on normal fixture disposal. The database name must be `jobhunter_integration` and host must be loopback. Never point this variable at a real data store. Without the environment variable, integration tests are explicitly skipped and unit tests still run. GitHub Actions provisions a separate PostgreSQL 16 service and explicitly runs both suites. Local cleanup: `docker rm -f jobhunter-integration-pg` and `set JOBHUNTER_INTEGRATION_DB=`. Only remove the dedicated test container. No user secrets changes are needed.
+
+Coverage: missing/wrong token, Origin and Host rejection, disabled endpoint, tool discovery and search input schema, Persian data round-trip, search/history paging, write denial, successful and stale status changes with field preservation and audit rows, real PostgreSQL cache hit, description invalidation, expiration and cleanup, matching with incomplete records. Live provider accuracy, remote network tests, concurrent mutation races, and full production security remain outside this suite.
