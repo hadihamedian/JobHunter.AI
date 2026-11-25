@@ -7,9 +7,27 @@ using AiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace JobHunter.AI.Api.Services;
 
-public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsTools)
+public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsTools, IAtsAnalysisCache? cache = null)
 {
     public async Task<AnalyzeResult?> AnalyzeAsync(string resume, string jobDesc, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (cache is null || !cache.Enabled)
+            return await AnalyzeCoreAsync(resume, jobDesc, cancellationToken);
+
+        var key = cache.CreateKey(resume, jobDesc);
+        var cached = await cache.TryGetAsync(key, cancellationToken);
+        if (AtsAnalysisCache.IsCacheable(cached)) return cached;
+
+        var result = await AnalyzeCoreAsync(resume, jobDesc, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (AtsAnalysisCache.IsCacheable(result))
+            await cache.TryStoreAsync(key, result!, cancellationToken);
+
+        return result;
+    }
+
+    private async Task<AnalyzeResult?> AnalyzeCoreAsync(string resume, string jobDesc, CancellationToken cancellationToken)
     {
         // Stage 1: Extract requirements from job description
         var requirements = await ExtractRequirementsAsync(jobDesc, cancellationToken);

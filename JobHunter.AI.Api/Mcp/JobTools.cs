@@ -28,7 +28,7 @@ public static class JobTools
     // One AI-heavy request at a time. No unbounded waiting queue.
     private static readonly SemaphoreSlim AiGate = new(1, 1);
 
-    [McpServerTool(Name = "get_job_analysis", ReadOnly = true), Description("Run the existing ATS analysis for a saved job and resume. Results are generated on demand, not persisted.")]
+    [McpServerTool(Name = "get_job_analysis", ReadOnly = true), Description("Run the existing ATS analysis for a saved job and resume. Reuses a recent cached analysis when inputs and model settings are unchanged.")]
     public static async Task<AnalyzeResult> GetJobAnalysis(ApplicationRepository repository,
         ResumeRepository resumes, AiAnalyzerService analyzer, Guid applicationId, Guid? resumeId = null,
         CancellationToken cancellationToken = default)
@@ -47,7 +47,7 @@ public static class JobTools
         finally { AiGate.Release(); }
     }
 
-    [McpServerTool(Name = "get_matching_jobs", ReadOnly = true), Description("Rank a bounded page of Saved jobs by fresh ATS score for one resume. This does not search the internet or rank the entire database.")]
+    [McpServerTool(Name = "get_matching_jobs", ReadOnly = true), Description("Rank a bounded page of Saved jobs by cached or freshly computed ATS score for one resume. This does not search the internet or rank the entire database.")]
     public static async Task<MatchingJobsResult> GetMatchingJobs(ApplicationRepository repository,
         ResumeRepository resumes, AiAnalyzerService analyzer, Guid? resumeId = null,
         int minScore = 60, int candidateLimit = 5, int offset = 0,

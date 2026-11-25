@@ -38,6 +38,15 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 var dataSource = NpgsqlDataSource.Create(connectionString);
 builder.Services.AddSingleton(dataSource);
 
+// Shared persistent ATS cache (REST and MCP use the same analyzer).
+builder.Services.AddSingleton(new AtsCacheSettings(
+    builder.Configuration.GetValue("AtsCache:Enabled", true),
+    builder.Configuration.GetValue("AtsCache:TtlHours", 24),
+    ollamaEndpoint, ollamaModel, numCtx,
+    builder.Configuration["AtsCache:ModelRevision"] ?? string.Empty));
+builder.Services.AddSingleton<AtsAnalysisCache>();
+builder.Services.AddSingleton<IAtsAnalysisCache>(sp => sp.GetRequiredService<AtsAnalysisCache>());
+
 // Repositories
 builder.Services.AddScoped<ApplicationRepository>();
 builder.Services.AddScoped<ResumeRepository>();
@@ -265,6 +274,7 @@ interviews.MapDelete("/application/{applicationId:guid}", async (Guid applicatio
 await ResumeRepository.InitDbAsync(dataSource);
 await InterviewRepository.InitDbAsync(dataSource);
 await ApplicationRepository.InitDbAsync(dataSource);
+await app.Services.GetRequiredService<AtsAnalysisCache>().InitializeAsync();
 
 app.MapJobHunterMcp();
 app.Run();

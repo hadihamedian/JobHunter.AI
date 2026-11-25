@@ -52,11 +52,31 @@ Start the server from the MCP configuration and inspect its tool list. Client co
 |---|---|
 | search_jobs | Keyword and optional status search of existing application records, page size 1–100. No internet search. |
 | get_application_history | List existing application records; not a status-event timeline. |
-| get_job_analysis | Fresh ATS evaluation of one saved job with an explicit, linked, or default resume. No persistent analysis cache. |
-| get_matching_jobs | Fresh ATS ranking for a page of up to five Saved records, using an explicit or default resume. Returns examined count, next offset and skipped IDs. Not a global ranking. |
+| get_job_analysis | ATS evaluation of one saved job with an explicit, linked, or default resume; reuses a valid cached result. |
+| get_matching_jobs | ATS ranking (cached or freshly computed) for a page of up to five Saved records, using an explicit or default resume. Returns examined count, next offset and skipped IDs. Not a global ranking. |
 | update_application_status | Write-disabled by default. Compare-and-set status only, with an atomic MCP audit insert. Does not send an application or change other fields. |
 
 Example calls: `search_jobs(query: ".NET", limit: 10)`, `get_matching_jobs(minScore: 70, candidateLimit: 3)`, `get_job_analysis(applicationId: "<existing UUID>")`. For analysis the job must have a stored description, and Ollama must be running. AI scores are estimates and may be influenced by untrusted job text. Resume and description input limits are 16,000 characters each; model context may impose a lower limit. AI calls are serialized across MCP requests and bounded by a cancellation deadline; existing REST AI calls are not included in this gate.
+
+## Shared ATS analysis cache
+
+The existing REST analysis endpoints and both AI-heavy MCP tools share a PostgreSQL-backed cache via `AiAnalyzerService`. No additional infrastructure is required. The additive `AtsAnalysisCache` table and expiry index are initialized at startup. Cache initialization failure disables caching until restart, without blocking the existing analyzer. Read/write failures fall back to normal analysis. Caller cancellation is propagated.
+
+- Defaults: `AtsCache:Enabled=true`, `AtsCache:TtlHours=24` (valid range 1–168 hours).
+- Cache keys hash the exact resume and job description, effective Ollama endpoint/model/context window, explicit `AtsCache:ModelRevision`, and `AtsAnalysisCache.AlgorithmVersion`. No full raw resume or job description is added to the cache table; derived ATS results may still contain personal data.
+- If model weights change under the same Ollama tag, change `AtsCache:ModelRevision` and restart. Bump `AlgorithmVersion` when changing ATS prompts, skill matching or scoring. TTL is measured from the successful write, not extended by reads.
+- Null/malformed results and out-of-range scores are not cached. This does not validate the semantic accuracy of a model-generated score; quality fixes are separate.
+- Expired rows are excluded from reads and physically removed at startup or a subsequent successful write (not by a background scheduler). The cache is scoped to the existing single-user deployment; tenant isolation and deletion/retention policy are required before multi-user use.
+- The existing MCP AI gate is unchanged; simultaneous REST misses are not deduplicated. Cold analysis can still exceed a client's 60-second timeout.
+
+To disable caching: `dotnet user-secrets set "AtsCache:Enabled" "false" --project JobHunter.AI.Api` and restart. To validate, call `get_job_analysis` twice with the same valid job and resume, using a sufficiently fast Ollama model. Expect `ATS cache MISS` then `ATS cache STORED` for the first call and `ATS cache HIT` for the second. If a client times out, check server logs and the configured client deadline; do not repeatedly submit slow requests. Confirm a cache hit after API restart. On a disposable record, change the description and confirm a fresh miss.
+
+Inspect metadata only (avoid exposing derived personal data):
+
+```sql
+SELECT "CreatedAt", "ExpiresAt" FROM "AtsAnalysisCache"
+ORDER BY "CreatedAt" DESC LIMIT 5;
+```
 
 ## Write test (disposable database only)
 
@@ -78,4 +98,4 @@ After backing up your database, use a test record. Enable writes explicitly with
 
 ## Remaining before release
 
-Integration and regression tests with real PostgreSQL and MCP clients, dependency compatibility verification, REST authentication and deployment hardening, separate write authorization, rate limits, prompt-injection testing, output size limits, persisted analysis/caching, full status history, packaging and registry registration. Remote OAuth is intentionally deferred until the existing unauthenticated REST surface is secured. Do not publish this preview as production-ready.
+Integration and regression tests with real PostgreSQL and MCP clients, dependency compatibility verification, REST authentication and deployment hardening, separate write authorization, rate limits, prompt-injection testing, output size limits, ATS quality improvements, cache integration tests and cold-analysis timeout handling, full status history, packaging and registry registration. Remote OAuth is intentionally deferred until the existing unauthenticated REST surface is secured. Do not publish this preview as production-ready.
