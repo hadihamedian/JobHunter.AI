@@ -33,10 +33,12 @@ public static class JobTools
 
     [McpServerTool(Name = "get_job_analysis", ReadOnly = true), Description("Run the existing ATS analysis for a saved job and resume. Reuses a recent cached analysis when inputs and model settings are unchanged.")]
     public static async Task<AnalyzeResult> GetJobAnalysis(ApplicationRepository repository,
-        ResumeRepository resumes, AiAnalyzerService analyzer, Guid applicationId, Guid? resumeId = null,
+        ResumeRepository resumes, AiAnalyzerService analyzer, McpResourceLimits limits, Guid applicationId, Guid? resumeId = null,
         CancellationToken cancellationToken = default)
     {
         if (applicationId == Guid.Empty) throw new McpException("Application ID is required.");
+        cancellationToken.ThrowIfCancellationRequested();
+        using var analysisSlot = limits.AcquireAnalysis();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(ToolBudget);
         try
@@ -52,12 +54,14 @@ public static class JobTools
 
     [McpServerTool(Name = "get_matching_jobs", ReadOnly = true), Description("Rank a bounded page of Saved jobs by cached or freshly computed ATS score for one resume. This does not search the internet or rank the entire database.")]
     public static async Task<MatchingJobsResult> GetMatchingJobs(ApplicationRepository repository,
-        ResumeRepository resumes, AiAnalyzerService analyzer, Guid? resumeId = null,
+        ResumeRepository resumes, AiAnalyzerService analyzer, McpResourceLimits limits, Guid? resumeId = null,
         int minScore = 60, int candidateLimit = 5, int offset = 0,
         CancellationToken cancellationToken = default)
     {
         if (minScore is < 0 or > 100 || candidateLimit is < 1 or > 5 || offset is < 0 or > 100000)
             throw new McpException("Invalid score or page. Candidate limit must be 1–5.");
+        cancellationToken.ThrowIfCancellationRequested();
+        using var analysisSlot = limits.AcquireAnalysis();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(ToolBudget);
         var ct = timeout.Token;

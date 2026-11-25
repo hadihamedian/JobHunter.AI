@@ -59,7 +59,7 @@ public class JobToolsTests
     [Fact]
     public async Task MatchingJobs_RejectsOversizedCandidateBatch()
     {
-        await Assert.ThrowsAsync<McpException>(() => JobTools.GetMatchingJobs(null!, null!, null!, candidateLimit: 6));
+        await Assert.ThrowsAsync<McpException>(() => JobTools.GetMatchingJobs(null!, null!, null!, null!, candidateLimit: 6));
     }
     [Fact]
     public async Task MatchingBudgetReturnsCompletedResultsAndRetriesInterruptedCandidate()

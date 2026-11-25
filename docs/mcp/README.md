@@ -151,3 +151,7 @@ For a write-capable MCP client, use the same local `/mcp` endpoint and send `Aut
 The SDK is configured without HTTP sessions, so an `Mcp-Session-Id` cannot carry or elevate privileges. The SDK's request identity is derived from the currently authenticated bearer credential; no write privilege is persisted in a session. Stateless operation does not imply OAuth, remote access, or automatic approval of mutations. Each requested status change still needs an explicit expected status and the client's informed confirmation.
 
 Stage 6.3 regression checks: read token can call `search_jobs` and is denied on `update_application_status`, even with `AllowWrites=true`; write token cannot mutate with `AllowWrites=false`; valid write token succeeds after opt-in; stale status does not create a second audit row; REST credentials are rejected by MCP and vice versa; no session identifier is issued. Test with the disposable PostgreSQL setup above, not a real application database.
+
+## Stage 6.4 — local resource limits
+
+See [security.md](security.md#stage-64--mcp-resource-protection) for configuration and retry behavior. Clients should respect HTTP 429 Retry-After and avoid immediately retrying ATS tool errors. No REST configuration changes are required. Run the disposable PostgreSQL integration suite to verify rate limiting, actual body size enforcement, credential-independent ATS limits and unchanged tool schemas. Live-client acceptance remains separate.

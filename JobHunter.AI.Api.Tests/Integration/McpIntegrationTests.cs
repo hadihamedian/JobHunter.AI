@@ -163,6 +163,62 @@ public class McpIntegrationTests
         Assert.Equal(1L, (long)(await count.ExecuteScalarAsync())!);
     }
 
+    [IntegrationFact]
+    public async Task TransportRateLimitIncludesInvalidCredentialsAndLeavesRestUntouched()
+    {
+        await using var host = await TestHost.StartAsync(limits: new() { ["Mcp:Limits:RequestsPerMinute"] = "2" });
+        using var anonymous = new HttpClient { BaseAddress = host.Client.BaseAddress };
+        using var first = await anonymous.GetAsync("/mcp");
+        using var second = await anonymous.GetAsync("/mcp");
+        Assert.Equal(HttpStatusCode.Unauthorized, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, second.StatusCode);
+        using var limited = await host.Client.GetAsync("/mcp");
+        Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+        Assert.NotNull(limited.Headers.RetryAfter);
+        Assert.True(limited.Headers.CacheControl?.NoStore == true);
+        using var rest = new HttpClient { BaseAddress = host.Client.BaseAddress };
+        rest.DefaultRequestHeaders.Authorization = new("Bearer", TestHost.RestToken);
+        using var response = await rest.GetAsync("/api/auth/session");
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
+    [IntegrationFact]
+    public async Task OversizedAndEncodedBodiesAreRejectedBeforeDispatch()
+    {
+        await using var host = await TestHost.StartAsync(limits: new() { ["Mcp:Limits:MaxBodyBytes"] = "1024" });
+        using var body = new StringContent(new string('x', 1025), System.Text.Encoding.UTF8, "application/json");
+        using var oversized = await host.Client.PostAsync("/mcp", body);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, oversized.StatusCode);
+        using var chunked = new HttpRequestMessage(HttpMethod.Post, "/mcp")
+        { Content = new StringContent(new string('x', 1025), System.Text.Encoding.UTF8, "application/json") };
+        chunked.Headers.TransferEncodingChunked = true;
+        using var streamed = await host.Client.SendAsync(chunked);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, streamed.StatusCode);
+        using var encoded = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+        encoded.Headers.ContentEncoding.Add("gzip");
+        using var unsupported = await host.Client.PostAsync("/mcp", encoded);
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, unsupported.StatusCode);
+        await host.InitializeAsync();
+        var list = await host.RpcAsync("tools/list", new { });
+        var analysis = list.GetProperty("tools").EnumerateArray().Single(t => t.GetProperty("name").GetString() == "get_job_analysis");
+        Assert.Equal(new[] { "applicationId", "resumeId" }, analysis.GetProperty("inputSchema").GetProperty("properties")
+            .EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+    }
+
+    [IntegrationFact]
+    public async Task AnalysisBudgetIsSharedAcrossCredentialsAndDoesNotBlockSearch()
+    {
+        await using var host = await TestHost.StartAsync(limits: new() { ["Mcp:Limits:AnalysisPerMinute"] = "1" });
+        var id = await host.SeedAsync("Backend", "C#", 0);
+        await host.InitializeAsync();
+        await host.CallAsync("get_job_analysis", new { applicationId = id });
+        host.UseWriteCredential();
+        var limited = await host.RawCallAsync("get_matching_jobs", new { candidateLimit = 1 });
+        Assert.True(limited.GetProperty("isError").GetBoolean());
+        Assert.Equal(1, host.AiCalls);
+        Assert.Single((await host.CallAsync("search_jobs", new { })).EnumerateArray());
+    }
+
     private sealed class TestHost : IAsyncDisposable
     {
         private readonly NpgsqlDataSource _admin;
@@ -180,7 +236,7 @@ public class McpIntegrationTests
         private TestHost(NpgsqlDataSource admin, string schema, NpgsqlDataSource db, WebApplication app)
             => (_admin, _schema, Db, App) = (admin, schema, db, app);
 
-        public static async Task<TestHost> StartAsync(bool enabled = true)
+        public static async Task<TestHost> StartAsync(bool enabled = true, Dictionary<string, string?>? limits = null)
         {
             var cs = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("JOBHUNTER_INTEGRATION_DB")!);
             if (cs.Database != "jobhunter_integration" || cs.Host is not ("localhost" or "127.0.0.1"))
@@ -195,6 +251,7 @@ public class McpIntegrationTests
             builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
                 ["Mcp:Enabled"] = enabled.ToString(), ["Mcp:Token"] = ReadToken, ["Mcp:WriteToken"] = WriteToken,
                 ["Mcp:AllowWrites"] = "false", ["RestAuth:Token"] = RestToken });
+            if (limits is not null) builder.Configuration.AddInMemoryCollection(limits);
             builder.Services.AddSingleton(db);
             builder.Services.AddScoped<ApplicationRepository>();
             builder.Services.AddScoped<ResumeRepository>();
