@@ -63,37 +63,48 @@ public static class JobTools
         {
             var resume = await ResolveResumeAsync(resumes, resumeId, ct);
             var candidates = await repository.GetAllAsync("Saved", null, candidateLimit, offset, ct);
-            var matches = new List<MatchingJob>();
-            var skipped = new List<Guid>();
-            var examined = 0;
-            var timedOut = false;
-            foreach (var candidate in candidates)
+            return await MatchPageAsync(resume.Id, candidates.Select(c => c.Id), offset, async (id, token) =>
             {
-                try
-                {
-                    ct.ThrowIfCancellationRequested();
-                    var job = await repository.GetByIdAsync(candidate.Id, ct);
-                    if (job is null || job.Status != "Saved" || string.IsNullOrWhiteSpace(job.JobDescription) || job.JobDescription.Length > 16000)
-                        skipped.Add(candidate.Id);
-                    else
-                    {
-                        var analysis = await analyzer.AnalyzeAsync(resume.Content, job.JobDescription, ct);
-                        if (analysis is null || analysis.AtsScore is < 0 or > 100) skipped.Add(candidate.Id);
-                        else if (analysis.AtsScore >= minScore)
-                            matches.Add(new MatchingJob(job.Id, job.CompanyName, job.Position, job.JobUrl, analysis.AtsScore));
-                    }
-                    examined++;
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timeout.IsCancellationRequested)
-                { timedOut = true; break; }
-            }
-            cancellationToken.ThrowIfCancellationRequested();
-            return new MatchingJobsResult(resume.Id, examined, offset + examined,
-                matches.OrderByDescending(x => x.AtsScore).ThenBy(x => x.ApplicationId).ToList(), skipped,
-                timedOut, timedOut ? "Time budget reached; retry from NextOffset or pre-analyze the job in the Web App." : null);
+                var job = await repository.GetByIdAsync(id, token);
+                if (job is null || job.Status != "Saved" || string.IsNullOrWhiteSpace(job.JobDescription) || job.JobDescription.Length > 16000)
+                    return (null, true);
+                var analysis = await analyzer.AnalyzeAsync(resume.Content, job.JobDescription, token);
+                if (analysis is null || analysis.AtsScore is < 0 or > 100) return (null, true);
+                return (analysis.AtsScore >= minScore
+                    ? new MatchingJob(job.Id, job.CompanyName, job.Position, job.JobUrl, analysis.AtsScore) : null, false);
+            }, ct, cancellationToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timeout.IsCancellationRequested)
         { throw new McpException("Matching exceeded the server time budget before loading candidates."); }
+    }
+
+    internal static async Task<MatchingJobsResult> MatchPageAsync(Guid resumeId, IEnumerable<Guid> candidates,
+        int offset, Func<Guid, CancellationToken, Task<(MatchingJob? Match, bool Skipped)>> evaluate,
+        CancellationToken budgetToken, CancellationToken callerToken)
+    {
+        var matches = new List<MatchingJob>();
+        var skipped = new List<Guid>();
+        var examined = 0;
+        var timedOut = false;
+        foreach (var id in candidates)
+        {
+            try
+            {
+                callerToken.ThrowIfCancellationRequested();
+                budgetToken.ThrowIfCancellationRequested();
+                var result = await evaluate(id, budgetToken);
+                budgetToken.ThrowIfCancellationRequested();
+                if (result.Skipped) skipped.Add(id);
+                else if (result.Match is not null) matches.Add(result.Match);
+                examined++;
+            }
+            catch (OperationCanceledException) when (!callerToken.IsCancellationRequested && budgetToken.IsCancellationRequested)
+            { timedOut = true; break; }
+        }
+        callerToken.ThrowIfCancellationRequested();
+        return new MatchingJobsResult(resumeId, examined, offset + examined,
+            matches.OrderByDescending(m => m.AtsScore).ThenBy(m => m.ApplicationId).ToList(), skipped,
+            timedOut, timedOut ? "Time budget reached; retry from NextOffset or pre-analyze the job in the Web App." : null);
     }
 
     [McpServerTool(Name = "update_application_status", ReadOnly = false), Description("Change only the status of one existing application. Requires explicitly enabled write access and the current expected status. Does not submit applications.")]

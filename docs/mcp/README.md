@@ -105,3 +105,7 @@ After backing up your database, use a test record. Enable writes explicitly with
 ## Remaining before release
 
 Integration and regression tests with real PostgreSQL and MCP clients, dependency compatibility verification, REST authentication and deployment hardening, separate write authorization, rate limits, prompt-injection testing, output size limits, ATS quality improvements, cache integration tests and cold-analysis timeout handling, full status history, packaging and registry registration. Remote OAuth is intentionally deferred until the existing unauthenticated REST surface is secured. Do not publish this preview as production-ready.
+
+## Stage 3.1 refinements
+
+ATS v3 excludes requirements without letters (including bare numeric thresholds); the extractor is instructed to keep the full experience requirement. Malformed numeric-only thresholds are discarded rather than guessed. For .NET Core requirements, explicit modern .NET 5+ and ASP.NET Core are accepted as heuristic evidence, not proof of exact runtime version; .NET Framework alone does not qualify. Cache keys change to ats-v3. The matching loop has controlled cancellation tests for partial results and caller cancellation; real PostgreSQL/Ollama timeout acceptance remains separate.

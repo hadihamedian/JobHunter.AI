@@ -48,4 +48,34 @@ public class JobToolsTests
     {
         await Assert.ThrowsAsync<McpException>(() => JobTools.GetMatchingJobs(null!, null!, null!, candidateLimit: 6));
     }
+    [Fact]
+    public async Task MatchingBudgetReturnsCompletedResultsAndRetriesInterruptedCandidate()
+    {
+        using var budget = new CancellationTokenSource();
+        var ids = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+        var result = await JobTools.MatchPageAsync(Guid.NewGuid(), ids, 10, (id, ct) =>
+        {
+            if (id == ids[1]) budget.Cancel();
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult<(JobTools.MatchingJob?, bool)>((new(id, "Test", "Dev", null, 80), false));
+        }, budget.Token, CancellationToken.None);
+        Assert.True(result.TimedOut);
+        Assert.Equal(1, result.CandidatesExamined);
+        Assert.Equal(11, result.NextOffset);
+        Assert.Equal(ids[0], Assert.Single(result.Matches).ApplicationId);
+        Assert.Empty(result.SkippedApplicationIds);
+    }
+
+    [Fact]
+    public async Task MatchingCallerCancellationIsNotReportedAsBudgetTimeout()
+    {
+        using var caller = new CancellationTokenSource();
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(caller.Token);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => JobTools.MatchPageAsync(Guid.NewGuid(), [Guid.NewGuid()], 0, (id, ct) =>
+        {
+            caller.Cancel();
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult<(JobTools.MatchingJob?, bool)>((null, true));
+        }, budget.Token, caller.Token));
+    }
 }

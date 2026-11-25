@@ -52,6 +52,7 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
         requirements = requirements
             .Where(r => r is not null && !string.IsNullOrWhiteSpace(r.Text)
                 && r.Type is "skill" or "experience")
+            .Where(r => r.Text.Any(char.IsLetter))
             .Select(r => new RequirementItem { Text = r.Text.Trim(), Type = r.Type })
             .GroupBy(r => r.Text, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
@@ -97,7 +98,7 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
             Do NOT include vague soft-skill, personality, or attitude requirements (e.g. "team spirit", "problem-solving ability"). Exclude these entirely.
             Keep every requirement ATOMIC: one single technology/skill per item. If a sentence lists multiple technologies, split them into separate items.
             Extract EVERY distinct item from any technology list.
-            Write each requirement's "text" as the technology/skill name itself (prefer English names for technologies).
+            Write skill text as the technology name itself. Never return a bare number as a skill or experience requirement. For experience, preserve the full threshold and relevant domain (e.g. "3 years of microservices experience").
 
             Job Description:
             {{jobDesc}}

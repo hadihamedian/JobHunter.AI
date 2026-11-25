@@ -20,7 +20,7 @@ public sealed class AtsAnalysisCache(
     NpgsqlDataSource db, AtsCacheSettings settings, ILogger<AtsAnalysisCache> logger) : IAtsAnalysisCache
 {
     // Bump whenever the ATS prompts, skill rules or scoring algorithm change.
-    public const string AlgorithmVersion = "ats-v2";
+    public const string AlgorithmVersion = "ats-v3";
     private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(5);
     private bool _initialized;
 

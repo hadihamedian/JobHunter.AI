@@ -54,6 +54,13 @@ public class AtsEvaluationTools
         if (ContainsWholeToken(resume, token))
             return true;
 
+        // Modern .NET (5+) is the successor of .NET Core; .NET Framework is not.
+        if (token.Equals(".NET Core", StringComparison.OrdinalIgnoreCase) &&
+            (ContainsWholeToken(resume, "dotnet core") || ContainsWholeToken(resume, "ASP.NET Core") ||
+            Regex.IsMatch(resume, @"(?<![A-Za-z0-9])(?:\.NET|dotnet)\s*(?:[5-9]|[1-9][0-9]+)(?![A-Za-z0-9])",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)))
+            return true;
+
         foreach (var (canonical, aliases) in ConservativeSynonyms)
         {
             if (string.Equals(canonical, token, StringComparison.OrdinalIgnoreCase) ||

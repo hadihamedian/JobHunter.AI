@@ -40,5 +40,27 @@ public class AtsScoringTests
         Assert.Empty(result.CriticalMissingSkills);
     }
 
+    [Fact]
+    public async Task BareNumbersAreNotSkillsOrExperienceRequirements()
+    {
+        var chat = new Mock<IChatClient>();
+        chat.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<AiChatMessage>>(), It.IsAny<ChatOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Response("""{"requirements":[{"text":"3","type":"skill"},{"text":"5+","type":"experience"},{"text":".NET Core","type":"skill"},{"text":"React","type":"skill"}]}"""));
+        var result = await new AiAnalyzerService(chat.Object, new AtsEvaluationTools()).AnalyzeAsync(".NET 8", ".NET Core and React");
+        Assert.NotNull(result);
+        Assert.Equal(50, result.AtsScore);
+        Assert.Equal(".NET Core", Assert.Single(result.MatchingSkills));
+        Assert.Equal("React", Assert.Single(result.MissingSkills));
+    }
+
+    [Theory]
+    [InlineData("ASP.NET Core", true)]
+    [InlineData(".NET 10", true)]
+    [InlineData("dotnet core", true)]
+    [InlineData(".NET Framework 4.8", false)]
+    [InlineData(".NET", false)]
+    public void ModernDotNetAliasesAreConservative(string resume, bool expected)
+        => Assert.Equal(expected, new AtsEvaluationTools().CheckSkillPresence(resume, ".NET Core"));
+
     private static AiChatResponse Response(string text) => new(new AiChatMessage(ChatRole.Assistant, text));
 }
