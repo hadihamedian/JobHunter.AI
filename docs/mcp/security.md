@@ -31,3 +31,20 @@ Local, single-process limits are shared across read and write credentials. All M
 Authenticated MCP POST bodies are limited to 65,536 actual bytes, including chunked transfer; oversized requests return 413, unsupported Content-Encoding returns 415, and a cooperative ten-second upload deadline returns 408. JSON-RPC parsing and errors remain the SDK's responsibility. The middleware does not log bodies or credentials. Existing Kestrel header and transport limits continue to apply. These are not public-network DoS defenses or output-size limits. Fixed windows allow bursts near a boundary; budgets reset on process restart, are shared by trusted local clients, and an invalid-token flood can exhaust the local budget.
 
 Optional startup configuration (restart required): `Mcp:Limits:RequestsPerMinute` (1–600), `Mcp:Limits:AnalysisPerMinute` (1–120), `Mcp:Limits:MaxConcurrentRequests` (1–32), `Mcp:Limits:MaxBodyBytes` (1024–262144). Invalid values fail startup when MCP is enabled. Do not raise limits without measuring local resource usage. The existing 45-second cooperative analysis deadline and field/page limits remain unchanged.
+
+
+## Stage 6.5 — security acceptance
+
+Read-tool typed JSON payloads are checked against a 128 KiB UTF-8 budget before SDK serialization. Oversized results return a safe tool error; no silent truncation or altered pagination. Reduce page size or shorten stored data. This is not a hard wire-byte or allocation cap: the repository and serialization may allocate the full result before checking, and the SDK envelope adds overhead. The fixed-size write result does not need this check.
+
+ATS prompts separate trusted system instructions from JSON-encoded untrusted job/resume data. The shared REST/MCP analyzer is affected; cache algorithm version is bumped to ats-v4 so old prompt results are not reused. No model tool access is added. This reduces injection risk but cannot guarantee model compliance. MCP clients must treat all tool data as untrusted, never follow embedded instructions, and obtain explicit approval for writes; use the read credential by default. Stored text is not censored or rewritten.
+
+Acceptance checklist (mark only after execution):
+- [ ] Release build and full unit/integration suite with zero skips against disposable PostgreSQL.
+- [ ] Read/write separation, disabled writes, compare-and-set and audit, REST token isolation, no session privilege carry.
+- [ ] HTTP body/rate/concurrency controls and safe oversized-output error; smaller page still succeeds.
+- [ ] Synthetic stored prompt injection leaves records/audit unchanged under read credential; verify real model and real client separately.
+- [ ] Verify real client discovery and schema, read calls, explicit approval before any write, and inspect safe logs without sharing credentials.
+- [ ] Verify loopback-only bindings and REST browser login/logout/reload after native API startup.
+
+Mocked model tests establish message separation and server authorization, not real-model resistance or universal secret redaction. No public deployment, OAuth, or multi-tenant security is claimed. Live client checks remain Stage 7; do not mark them passed from automated tests alone.

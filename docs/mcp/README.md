@@ -155,3 +155,8 @@ Stage 6.3 regression checks: read token can call `search_jobs` and is denied on 
 ## Stage 6.4 — local resource limits
 
 See [security.md](security.md#stage-64--mcp-resource-protection) for configuration and retry behavior. Clients should respect HTTP 429 Retry-After and avoid immediately retrying ATS tool errors. No REST configuration changes are required. Run the disposable PostgreSQL integration suite to verify rate limiting, actual body size enforcement, credential-independent ATS limits and unchanged tool schemas. Live-client acceptance remains separate.
+
+
+## Stage 6.5 — output and untrusted data
+
+Read tool payloads exceeding 128 KiB of serialized UTF-8 JSON return a safe error. Request a smaller page or shorten stored fields; no pagination data is silently removed. This is a payload check, not a transport or memory cap. ATS prompt inputs are separated from system instructions and cache keys use ats-v4. Treat stored and generated text as untrusted data, never as tool instructions. See security.md for the acceptance checklist and remaining live-client validation.
