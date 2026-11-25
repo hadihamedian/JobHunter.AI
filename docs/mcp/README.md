@@ -109,3 +109,7 @@ Integration and regression tests with real PostgreSQL and MCP clients, dependenc
 ## Stage 3.1 refinements
 
 ATS v3 excludes requirements without letters (including bare numeric thresholds); the extractor is instructed to keep the full experience requirement. Malformed numeric-only thresholds are discarded rather than guessed. For .NET Core requirements, explicit modern .NET 5+ and ASP.NET Core are accepted as heuristic evidence, not proof of exact runtime version; .NET Framework alone does not qualify. Cache keys change to ats-v3. The matching loop has controlled cancellation tests for partial results and caller cancellation; real PostgreSQL/Ollama timeout acceptance remains separate.
+
+## Persian output readability
+
+MCP tool serialization uses a copy of the SDK default JSON options with a restricted Unicode encoder allowing Arabic-script text (including Persian). Property names, tool contracts and security-sensitive escaping are retained. This does not translate content or change REST serialization. Some characters (including zero-width marks) may still be escaped, and the transport envelope or Inspector may independently escape Unicode. Escaped JSON is semantically equivalent to literal Unicode. Verify by searching a stored record with a Persian company name and checking its decoded value; test an English record and tool discovery as regression checks.

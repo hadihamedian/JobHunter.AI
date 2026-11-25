@@ -1,4 +1,8 @@
 using System.Net;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.Unicode;
+using ModelContextProtocol;
 using System.Security.Cryptography;
 using System.Text;
 using ModelContextProtocol.AspNetCore;
@@ -13,8 +17,14 @@ public static class McpExtensions
         var token = builder.Configuration["Mcp:Token"];
         if (string.IsNullOrWhiteSpace(token) || token.Length < 32)
             throw new InvalidOperationException("MCP requires a randomly generated token of at least 32 characters.");
-        builder.Services.AddMcpServer().WithHttpTransport().WithToolsFromAssembly();
+        builder.Services.AddMcpServer().WithHttpTransport().WithToolsFromAssembly(serializerOptions: CreateToolJsonOptions());
     }
+
+    internal static JsonSerializerOptions CreateToolJsonOptions() => new(McpJsonUtilities.DefaultOptions)
+    {
+        Encoder = JavaScriptEncoder.Create(UnicodeRanges.BasicLatin, UnicodeRanges.Arabic,
+            UnicodeRanges.ArabicSupplement, UnicodeRanges.ArabicExtendedA)
+    };
 
     public static void UseJobHunterMcp(this WebApplication app)
     {
