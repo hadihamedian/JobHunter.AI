@@ -75,3 +75,27 @@ main {
         padding-right: 1.5rem !important;
     }
 }
+
+.session-section {
+    border-top: 1px solid #2a2a2e;
+    padding-top: 16px;
+}
+
+.session-lock {
+    width: 100%;
+    border: 1px solid transparent;
+    background: transparent;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.session-lock:hover {
+    border-color: #34344a;
+    color: #a5b4fc;
+}
+
+.session-lock:focus-visible {
+    outline: 2px solid #a5b4fc;
+    outline-offset: 2px;
+}

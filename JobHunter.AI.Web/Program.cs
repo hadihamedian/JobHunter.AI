@@ -11,7 +11,8 @@ var baseAddress = builder.HostEnvironment.IsDevelopment()
     ? "http://localhost:5065"
     : "";
 
-builder.Services.AddScoped(sp => new HttpClient
+builder.Services.AddScoped<RestSessionHandler>();
+builder.Services.AddScoped(sp => new HttpClient(sp.GetRequiredService<RestSessionHandler>(), disposeHandler: false)
 {
     BaseAddress = string.IsNullOrEmpty(baseAddress)
         ? new Uri(builder.HostEnvironment.BaseAddress)

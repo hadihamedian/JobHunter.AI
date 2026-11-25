@@ -25,7 +25,7 @@ dotnet user-secrets set "Mcp:Enabled" "true" --project JobHunter.AI.Api
 dotnet run --project JobHunter.AI.Api --launch-profile http
 ```
 
-Endpoint: `http://localhost:5065/mcp`. Every MCP request requires `Authorization: Bearer YOUR_GENERATED_SECRET`. Requests must come directly from loopback with a loopback Host header and no Origin header. This deliberately excludes remote clients and browser-direct calls. Do not expose the REST API, database or MCP endpoint to a public network. Existing REST routes are unauthenticated; the MCP bearer secret does not protect them. The supplied Docker Compose file publishes ports on all interfaces; bind them to loopback or firewall them if using Docker for dependencies. No Docker MCP support is claimed in this preview.
+Endpoint: `http://localhost:5065/mcp`. Every MCP request requires `Authorization: Bearer YOUR_GENERATED_SECRET`. Requests must come directly from loopback with a loopback Host header and no Origin header. This deliberately excludes remote clients and browser-direct calls. Do not expose the REST API, database or MCP endpoint to a public network. REST uses a separate local bearer token (see security.md); the MCP bearer secret does not protect REST. Docker Compose binds published ports to loopback. No Docker MCP support is claimed in this preview.
 
 ## Connect an MCP client (VS Code example)
 

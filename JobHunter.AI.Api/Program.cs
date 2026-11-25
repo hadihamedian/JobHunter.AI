@@ -1,5 +1,6 @@
 using JobHunter.AI.Api.Agents;
 using JobHunter.AI.Api.Mcp;
+using JobHunter.AI.Api.Security;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 using JobHunter.AI.Api.Tools;
@@ -85,6 +86,8 @@ var app = builder.Build();
 app.UseJobHunterMcp();
 app.UseRouting();
 app.UseCors();
+app.UseRestAccess();
+app.MapGet("/api/auth/session", () => Results.NoContent());
 
 // === CONVERSATIONAL AGENT ENDPOINTS ===
 
