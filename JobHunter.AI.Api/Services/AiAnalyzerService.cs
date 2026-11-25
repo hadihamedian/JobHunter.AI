@@ -9,10 +9,10 @@ namespace JobHunter.AI.Api.Services;
 
 public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsTools)
 {
-    public async Task<AnalyzeResult?> AnalyzeAsync(string resume, string jobDesc)
+    public async Task<AnalyzeResult?> AnalyzeAsync(string resume, string jobDesc, CancellationToken cancellationToken = default)
     {
         // Stage 1: Extract requirements from job description
-        var requirements = await ExtractRequirementsAsync(jobDesc);
+        var requirements = await ExtractRequirementsAsync(jobDesc, cancellationToken);
         if (requirements is null || requirements.Count == 0) return null;
 
         requirements = requirements
@@ -40,10 +40,10 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
         }
 
         // Stage 3: LLM reasoning for experience calculation and final score
-        return await FinalizeAsync(resume, experienceRequirements, matchingSkills, missingSkills);
+        return await FinalizeAsync(resume, experienceRequirements, matchingSkills, missingSkills, cancellationToken);
     }
 
-    private async Task<List<RequirementItem>?> ExtractRequirementsAsync(string jobDesc)
+    private async Task<List<RequirementItem>?> ExtractRequirementsAsync(string jobDesc, CancellationToken cancellationToken)
     {
         var prompt = $$"""
             Extract job requirements from the text below that can be OBJECTIVELY verified from a resume. For each one, classify it as exactly one of:
@@ -77,7 +77,7 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
             Temperature = 0.0f
         };
 
-        var response = await chatClient.GetResponseAsync(messages, options);
+        var response = await chatClient.GetResponseAsync(messages, options, cancellationToken);
         var rawText = response.Text?.Trim() ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(rawText)) return null;
@@ -100,7 +100,7 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
         string resume,
         List<RequirementItem> experienceRequirements,
         List<string> matchingSkills,
-        List<string> missingSkills)
+        List<string> missingSkills, CancellationToken cancellationToken)
     {
         var expList = experienceRequirements.Count > 0
             ? string.Join("\n", experienceRequirements.Select(r => "- " + r.Text))
@@ -146,7 +146,7 @@ public class AiAnalyzerService(IChatClient chatClient, AtsEvaluationTools atsToo
             Temperature = 0.0f
         };
 
-        var response = await chatClient.GetResponseAsync(messages, options);
+        var response = await chatClient.GetResponseAsync(messages, options, cancellationToken);
         var rawText = response.Text?.Trim() ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(rawText)) return null;

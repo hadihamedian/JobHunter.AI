@@ -18,16 +18,19 @@ public class AgentTests
     {
         var mockClient = new Mock<IChatClient>();
         IEnumerable<AiChatMessage>? capturedMessages = null;
+        ChatOptions? capturedOptions = null;
 
         mockClient
             .Setup(c => c.GetResponseAsync(
                 It.IsAny<IEnumerable<AiChatMessage>>(),
                 It.IsAny<ChatOptions?>(),
                 It.IsAny<CancellationToken>()))
-            .Callback<IEnumerable<AiChatMessage>, ChatOptions?, CancellationToken>((msgs, _, _) =>
-            {
-                capturedMessages = msgs.ToList();
-            })
+            .Callback<IEnumerable<AiChatMessage>, ChatOptions?, CancellationToken>(
+                (msgs, options, _) =>
+                {
+                    capturedMessages = msgs.ToList();
+                    capturedOptions = options;
+                })
             .ReturnsAsync(new AiChatResponse(new AiChatMessage(AiChatRole.Assistant, "Here is your career advice.")));
 
         var skills = new CareerAdvisorTools(null!, null!);
@@ -47,7 +50,14 @@ public class AgentTests
         Assert.NotNull(capturedMessages);
 
         var list = capturedMessages.ToList();
-        Assert.Contains(list, m => m.Role == AiChatRole.System && m.Text!.Contains("expert technical career advisor"));
+        Assert.True(
+            list.Any(m =>
+                m.Role == AiChatRole.System &&
+                m.Text?.Contains("expert technical career advisor") == true)
+            ||
+            capturedOptions?.Instructions?
+                .Contains("expert technical career advisor") == true,
+            "Agent system instructions were not provided.");
         Assert.Contains(list, m => m.Role == AiChatRole.User && m.Text == "Hello");
         Assert.Contains(list, m => m.Role == AiChatRole.Assistant && m.Text == "Hi, how can I help?");
         Assert.Contains(list, m => m.Role == AiChatRole.User && m.Text == "What should I improve?");

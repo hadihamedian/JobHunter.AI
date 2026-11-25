@@ -25,12 +25,20 @@ CREATE TABLE IF NOT EXISTS ""Applications"" (
 ALTER TABLE ""Applications"" ADD COLUMN IF NOT EXISTS ""Priority"" INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ""Applications"" ADD COLUMN IF NOT EXISTS ""JobDescription"" TEXT;
 ALTER TABLE ""Applications"" ADD COLUMN IF NOT EXISTS ""ResumeId"" UUID REFERENCES ""Resumes""(""Id"") ON DELETE RESTRICT;
+CREATE TABLE IF NOT EXISTS ""ApplicationStatusAudit"" (
+    ""Id"" BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    ""ApplicationId"" UUID NOT NULL,
+    ""PreviousStatus"" TEXT NOT NULL,
+    ""NewStatus"" TEXT NOT NULL,
+    ""ChangedAt"" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ""Source"" TEXT NOT NULL
+);
 ";
         await using var cmd = dataSource.CreateCommand(sql);
         await cmd.ExecuteNonQueryAsync();
     }
 
-    public async Task<List<ApplicationSummary>> GetAllAsync(string? status = null, string? search = null)
+    public async Task<List<ApplicationSummary>> GetAllAsync(string? status = null, string? search = null, int? limit = null, int offset = 0, CancellationToken cancellationToken = default)
     {
         var list = new List<ApplicationSummary>();
         var sql = @"SELECT a.""Id"", a.""CompanyName"", a.""Position"", a.""JobUrl"", a.""Source"", a.""ResumeVersion"", a.""ResumeId"", r.""Name"", a.""Status"", a.""AtsScore"", a.""AppliedAt"", a.""CreatedAt"", a.""Priority""
@@ -52,16 +60,22 @@ WHERE 1=1";
             paramIndex++;
         }
 
-        sql += @" ORDER BY a.""Priority"" ASC, a.""CreatedAt"" DESC";
+        sql += @" ORDER BY a.""Priority"" ASC, a.""CreatedAt"" DESC, a.""Id"" ASC";
+        if (limit.HasValue) sql += $" LIMIT ${paramIndex} OFFSET ${paramIndex + 1}";
 
         await using var cmd = db.CreateCommand(sql);
         if (!string.IsNullOrEmpty(status))
             cmd.Parameters.AddWithValue(status);
         if (!string.IsNullOrEmpty(search))
             cmd.Parameters.AddWithValue($"%{search}%");
+        if (limit.HasValue)
+        {
+            cmd.Parameters.AddWithValue(limit.Value);
+            cmd.Parameters.AddWithValue(offset);
+        }
 
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
         {
             list.Add(new ApplicationSummary(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
@@ -162,6 +176,24 @@ WHERE ""Id"" = $11";
         cmd.Parameters.AddWithValue(req.Priority ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue(req.ResumeId ?? (object)DBNull.Value);
         return await cmd.ExecuteNonQueryAsync() > 0;
+    }
+
+    public async Task<bool> UpdateStatusAsync(Guid id, string expectedStatus, string newStatus, CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            WITH changed AS (
+                UPDATE "Applications" SET "Status" = $3, "UpdatedAt" = NOW()
+                WHERE "Id" = $1 AND "Status" = $2
+                RETURNING "Id"
+            )
+            INSERT INTO "ApplicationStatusAudit" ("ApplicationId", "PreviousStatus", "NewStatus", "Source")
+            SELECT "Id", $2, $3, 'MCP' FROM changed;
+            """;
+        await using var cmd = db.CreateCommand(sql);
+        cmd.Parameters.AddWithValue(id);
+        cmd.Parameters.AddWithValue(expectedStatus);
+        cmd.Parameters.AddWithValue(newStatus);
+        return await cmd.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 
     public async Task<bool> DeleteAsync(Guid id)

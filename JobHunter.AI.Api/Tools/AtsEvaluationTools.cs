@@ -69,9 +69,20 @@ public class AtsEvaluationTools
 
     private static bool ContainsWholeToken(string text, string token)
     {
-        var escaped = Regex.Escape(token.Trim());
-        var pattern = $@"(?<![A-Za-z0-9]){escaped}(?![A-Za-z0-9])";
-        return Regex.IsMatch(text, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        token = token.Trim();
+
+        var escaped = Regex.Escape(token);
+
+        var suffix = token.Equals("C++", StringComparison.OrdinalIgnoreCase)
+            ? @"(?:98|03|11|14|17|20|23|26)?"
+            : string.Empty;
+
+        var pattern = $@"(?<![A-Za-z0-9]){escaped}{suffix}(?![A-Za-z0-9])";
+
+        return Regex.IsMatch(
+            text,
+            pattern,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     private static List<string> ExtractCandidateTokens(string skillText)

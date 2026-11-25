@@ -1,4 +1,5 @@
 using JobHunter.AI.Api.Agents;
+using JobHunter.AI.Api.Mcp;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 using JobHunter.AI.Api.Tools;
@@ -69,7 +70,10 @@ builder.Services.AddScoped<SemanticSearchService>();
 builder.Services.AddScoped<CareerAdvisorAgent>();
 builder.Services.AddScoped<DataChatAgent>();
 
+builder.AddJobHunterMcp();
+
 var app = builder.Build();
+app.UseJobHunterMcp();
 app.UseRouting();
 app.UseCors();
 
@@ -262,6 +266,7 @@ await ResumeRepository.InitDbAsync(dataSource);
 await InterviewRepository.InitDbAsync(dataSource);
 await ApplicationRepository.InitDbAsync(dataSource);
 
+app.MapJobHunterMcp();
 app.Run();
 
 public class OllamaNumCtxChatClient(IChatClient innerClient, int numCtx) : DelegatingChatClient(innerClient)
