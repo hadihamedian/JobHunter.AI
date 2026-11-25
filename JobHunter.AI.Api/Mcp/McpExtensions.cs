@@ -37,13 +37,15 @@ public static class McpExtensions
             var ip = context.Connection.RemoteIpAddress;
             if (ip is null || !IPAddress.IsLoopback(ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip)
                 || !IsLocalHost(context.Request.Host.Host)
-                || context.Request.Headers.ContainsKey("Origin"))
+                || HasUntrustedHeaders(context.Request.Headers.Keys))
             {
                 context.Response.StatusCode = 403;
                 return;
             }
-            var auth = context.Request.Headers.Authorization.ToString();
-            if (!auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ||
+            context.Response.Headers.CacheControl = "no-store";
+            var authorization = context.Request.Headers.Authorization;
+            var auth = authorization.ToString();
+            if (authorization.Count != 1 || auth.Length > 4096 || !auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ||
                 !CryptographicOperations.FixedTimeEquals(expected, SHA256.HashData(Encoding.UTF8.GetBytes(auth[7..]))))
             {
                 context.Response.StatusCode = 401;
@@ -58,6 +60,11 @@ public static class McpExtensions
     {
         if (app.Configuration.GetValue<bool>("Mcp:Enabled")) app.MapMcp("/mcp");
     }
+
+    internal static bool HasUntrustedHeaders(IEnumerable<string> names) => names.Any(k =>
+        k.Equals("Origin", StringComparison.OrdinalIgnoreCase) ||
+        k.Equals("Forwarded", StringComparison.OrdinalIgnoreCase) ||
+        k.StartsWith("X-Forwarded-", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsLocalHost(string host) => host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
         || (IPAddress.TryParse(host.Trim('[', ']'), out var ip) && IPAddress.IsLoopback(ip));
