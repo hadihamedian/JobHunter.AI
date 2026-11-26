@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: jobassistant
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -28,12 +28,13 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Docker
       - ASPNETCORE_URLS=http://+:8080
+      - RestAuth__Token=${JOBHUNTER_REST_TOKEN:-}
       - Ollama__Endpoint=http://host.docker.internal:11434
       - Ollama__Model=llama3.2:latest
       - Ollama__NumCtx=8192
       - ConnectionStrings__DefaultConnection=Host=postgres;Database=jobassistant;Username=postgres;Password=postgres
     ports:
-      - "5065:8080"
+      - "127.0.0.1:5065:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -50,7 +51,7 @@ services:
       dockerfile: JobHunter.AI.Web/Dockerfile
     container_name: jobhunter-web
     ports:
-      - "5150:80"
+      - "127.0.0.1:5150:80"
     depends_on:
       - api
     networks:

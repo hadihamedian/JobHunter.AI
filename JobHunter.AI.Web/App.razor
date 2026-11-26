@@ -1,12 +1,143 @@
-﻿<Router AppAssembly="@typeof(App).Assembly">
-    <Found Context="routeData">
-        <RouteView RouteData="@routeData" DefaultLayout="@typeof(Layout.MainLayout)" />
-        <FocusOnNavigate RouteData="@routeData" Selector="h1" />
-    </Found>
-    <NotFound>
-        <PageTitle>Not found</PageTitle>
-        <LayoutView Layout="@typeof(Layout.MainLayout)">
-            <p role="alert">Sorry, there's nothing at this address.</p>
-        </LayoutView>
-    </NotFound>
-</Router>
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject JobHunter.AI.Web.Services.RestSessionHandler SessionHandler
+@implements IDisposable
+
+@if (_restoring)
+{
+    <main class="loading">Restoring session...</main>
+}
+else if (!_signedIn)
+{
+    <main class="panel" style="max-width:440px;margin:64px auto;padding:24px;">
+        <h1>JobHunter.AI</h1>
+        <small style="display:block;opacity:.7;">REST access • Build 6.2.4</small>
+        <p style="margin:12px 0 24px;">Enter your local REST access token to continue.</p>
+        <form @onsubmit="SignInAsync" @onsubmit:preventDefault="true">
+            <label for="rest-token" class="form-label">Access token</label>
+            <input id="rest-token" @ref="_tokenInput" type="password"
+                   class="form-input" autocomplete="off" autocapitalize="off"
+                   spellcheck="false" required disabled="@_busy"
+                   style="display:block;width:100%;min-height:44px;margin:8px 0;direction:ltr;" />
+            <button type="submit" class="btn-analyze" disabled="@_busy">
+                @(_busy ? "Checking..." : "Unlock")
+            </button>
+        </form>
+        @if (_error is not null)
+        {
+            <p role="alert" class="error">@_error</p>
+        }
+    </main>
+}
+else
+{
+    <CascadingValue Value="@((Func<Task>)SignOutAsync)">
+        <Router AppAssembly="@typeof(App).Assembly">
+            <Found Context="routeData">
+                <RouteView RouteData="@routeData" DefaultLayout="@typeof(Layout.MainLayout)" />
+                <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+            </Found>
+            <NotFound>
+                <PageTitle>Not found</PageTitle>
+                <LayoutView Layout="@typeof(Layout.MainLayout)">
+                    <p role="alert">Sorry, there's nothing at this address.</p>
+                </LayoutView>
+            </NotFound>
+        </Router>
+    </CascadingValue>
+}
+
+@code {
+    private ElementReference _tokenInput;
+    private string? _error;
+    private bool _busy;
+    private bool _signedIn;
+    private bool _restoring = true;
+
+    protected override void OnInitialized() => SessionHandler.Unauthorized += OnUnauthorized;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            await using var module = await OpenModuleAsync();
+            var token = await module.InvokeAsync<string?>("loadToken");
+            if (!string.IsNullOrEmpty(token)) await AuthenticateAsync(token, module, false);
+        }
+        catch (JSException) { _error = "Browser storage is unavailable. Sign in manually."; }
+        finally { _restoring = false; StateHasChanged(); }
+    }
+
+    private ValueTask<IJSObjectReference> OpenModuleAsync() =>
+        JS.InvokeAsync<IJSObjectReference>("import", "./js/rest-access.js?v=6.2.4");
+
+    private async Task SignInAsync()
+    {
+        if (_busy) return;
+        _busy = true;
+        _error = null;
+        try
+        {
+            await using var module = await OpenModuleAsync();
+            var token = (await module.InvokeAsync<string>("takeToken", _tokenInput)).Trim();
+            await AuthenticateAsync(token, module, true);
+        }
+        catch (JSException) { _error = "Cannot access the login form or browser storage."; }
+        finally { _busy = false; }
+    }
+
+    private async Task AuthenticateAsync(string token, IJSObjectReference module, bool remember)
+    {
+        if (token.Length != 64 || !token.All(Uri.IsHexDigit))
+        {
+            await module.InvokeVoidAsync("forgetToken");
+            _error = "Enter a valid 64-character hexadecimal access token.";
+            return;
+        }
+        try
+        {
+            Http.DefaultRequestHeaders.Authorization = new("Bearer", token);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            using var response = await Http.GetAsync("/api/auth/session", timeout.Token);
+            if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+            {
+                if (remember) await module.InvokeVoidAsync("saveToken", token);
+                _signedIn = true;
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                await module.InvokeVoidAsync("forgetToken");
+                _error = "Access denied. Enter your current access token.";
+            }
+            else _error = $"API unavailable or unexpected response ({(int)response.StatusCode}).";
+        }
+        catch (OperationCanceledException) { _error = "API request timed out. Check that the API is running."; }
+        catch (HttpRequestException) { _error = "Cannot connect to the API. Check that it is running."; }
+        finally { if (!_signedIn) Http.DefaultRequestHeaders.Authorization = null; }
+    }
+
+    private void OnUnauthorized(string token) => _ = InvokeAsync(async () =>
+    {
+        if (_signedIn && Http.DefaultRequestHeaders.Authorization?.Parameter == token)
+            await SignOutAsync("Session expired or token changed. Please sign in again.");
+    });
+
+    private Task SignOutAsync() => SignOutAsync(null);
+
+    private async Task SignOutAsync(string? message)
+    {
+        Http.DefaultRequestHeaders.Authorization = null;
+        _signedIn = false;
+        _error = message;
+        try
+        {
+            await using var module = await OpenModuleAsync();
+            await module.InvokeVoidAsync("forgetToken");
+        }
+        catch (JSException) { _error = "Could not clear browser storage. Clear site data before leaving this device."; }
+        finally { StateHasChanged(); }
+    }
+
+    public void Dispose() => SessionHandler.Unauthorized -= OnUnauthorized;
+}

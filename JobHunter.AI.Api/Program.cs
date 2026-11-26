@@ -1,4 +1,6 @@
 using JobHunter.AI.Api.Agents;
+using JobHunter.AI.Api.Mcp;
+using JobHunter.AI.Api.Security;
 using JobHunter.AI.Api.Models;
 using JobHunter.AI.Api.Services;
 using JobHunter.AI.Api.Tools;
@@ -37,6 +39,15 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 var dataSource = NpgsqlDataSource.Create(connectionString);
 builder.Services.AddSingleton(dataSource);
 
+// Shared persistent ATS cache (REST and MCP use the same analyzer).
+builder.Services.AddSingleton(new AtsCacheSettings(
+    builder.Configuration.GetValue("AtsCache:Enabled", true),
+    builder.Configuration.GetValue("AtsCache:TtlHours", 24),
+    ollamaEndpoint, ollamaModel, numCtx,
+    builder.Configuration["AtsCache:ModelRevision"] ?? string.Empty));
+builder.Services.AddSingleton<AtsAnalysisCache>();
+builder.Services.AddSingleton<IAtsAnalysisCache>(sp => sp.GetRequiredService<AtsAnalysisCache>());
+
 // Repositories
 builder.Services.AddScoped<ApplicationRepository>();
 builder.Services.AddScoped<ResumeRepository>();
@@ -69,9 +80,14 @@ builder.Services.AddScoped<SemanticSearchService>();
 builder.Services.AddScoped<CareerAdvisorAgent>();
 builder.Services.AddScoped<DataChatAgent>();
 
+builder.AddJobHunterMcp();
+
 var app = builder.Build();
+app.UseJobHunterMcp();
 app.UseRouting();
 app.UseCors();
+app.UseRestAccess();
+app.MapGet("/api/auth/session", () => Results.NoContent());
 
 // === CONVERSATIONAL AGENT ENDPOINTS ===
 
@@ -92,27 +108,27 @@ app.MapPost("/api/applications/chat", async (DataChatRequest req, DataChatAgent 
 
 // === DETERMINISTIC PIPELINE ENDPOINTS ===
 
-app.MapPost("/api/analyze", async (AnalyzeRequest request, [FromServices] AiAnalyzerService analyzer) =>
+app.MapPost("/api/analyze", async (AnalyzeRequest request, [FromServices] AiAnalyzerService analyzer, CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(request.ResumeContent) || string.IsNullOrWhiteSpace(request.JobDescription))
         return Results.BadRequest("Resume and job description are required.");
 
-    var result = await analyzer.AnalyzeAsync(request.ResumeContent, request.JobDescription);
+    var result = await analyzer.AnalyzeAsync(request.ResumeContent, request.JobDescription, cancellationToken);
     return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
 });
 
 app.MapPost("/api/analyze-by-id", async (
     AnalyzeByIdRequest req,
     ResumeRepository resumeRepo,
-    AiAnalyzerService analyzer) =>
+    AiAnalyzerService analyzer, CancellationToken cancellationToken) =>
 {
     if (req.ResumeId == Guid.Empty || string.IsNullOrWhiteSpace(req.JobDescription))
         return Results.BadRequest("ResumeId and JobDescription are required.");
 
-    var resume = await resumeRepo.GetByIdAsync(req.ResumeId);
+    var resume = await resumeRepo.GetByIdAsync(req.ResumeId, cancellationToken);
     if (resume is null) return Results.NotFound("Resume not found.");
 
-    var result = await analyzer.AnalyzeAsync(resume.Content, req.JobDescription);
+    var result = await analyzer.AnalyzeAsync(resume.Content, req.JobDescription, cancellationToken);
     return result is null ? Results.Problem("Failed to analyze") : Results.Ok(result);
 });
 
@@ -261,7 +277,9 @@ interviews.MapDelete("/application/{applicationId:guid}", async (Guid applicatio
 await ResumeRepository.InitDbAsync(dataSource);
 await InterviewRepository.InitDbAsync(dataSource);
 await ApplicationRepository.InitDbAsync(dataSource);
+await app.Services.GetRequiredService<AtsAnalysisCache>().InitializeAsync();
 
+app.MapJobHunterMcp();
 app.Run();
 
 public class OllamaNumCtxChatClient(IChatClient innerClient, int numCtx) : DelegatingChatClient(innerClient)

@@ -5,8 +5,8 @@
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
-		<WasmFingerprintAssets>false</WasmFingerprintAssets>
-		<FingerprintAssets>false</FingerprintAssets>
+		<WasmFingerprintAssets>true</WasmFingerprintAssets>
+		<FingerprintAssets>true</FingerprintAssets>
 	</PropertyGroup>
 
 	<ItemGroup>

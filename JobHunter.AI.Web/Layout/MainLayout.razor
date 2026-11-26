@@ -1,4 +1,4 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
 
 <div class="app-shell">
     <aside class="sidebar">
@@ -28,9 +28,23 @@
                 <span class="nav-icon">✂</span> Resume Tailor
             </NavLink>
         </div>
+        <div class="nav-section session-section">
+            
+            <button type="button" class="nav-item session-signout" @onclick="SignOut" title="Sign out">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10 17l5-5-5-5m5 5H3m9-9h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7" />
+                </svg>
+                Sign out
+            </button>
+        </div>
     </aside>
 
     <main class="main-content">
         @Body
     </main>
 </div>
+
+@code {
+    [CascadingParameter] public Func<Task>? OnSignOut { get; set; }
+    private Task SignOut() => OnSignOut?.Invoke() ?? Task.CompletedTask;
+}
