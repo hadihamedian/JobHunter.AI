@@ -1,50 +1,55 @@
-# Stage 6.1 — local deployment hardening
+# MCP security model — local preview
 
-Compose publishes PostgreSQL, API and Web only on IPv4 loopback. Recreate existing containers to apply the new bindings. This is not a public production deployment. Do not configure a reverse proxy, tunnel, or public listener for these services. Stage 6.1 alone did not authenticate REST; Stage 6.2 below adds a separate credential. MCP rejects Origin, Forwarded and X-Forwarded-* headers and multiple or oversized Authorization values. Authenticated MCP responses are marked no-store (the header is also applied to authentication failures after the local check). Keep MCP writes disabled except during controlled tests. Existing REST authentication, remote OAuth, rate limits, least-privilege write scopes and deployment secret management are separate release blockers. The network bindings may prevent access from other devices or VMs that previously used the host IP.
+## Deployment boundary
 
-Validate with `docker compose config`, recreate running services with `docker compose up -d`, and check published ports with `docker compose ps`. Run unit and integration tests against the disposable database as documented in README. Confirm the existing local Web App and MCP Inspector still connect; ensure a request with a Forwarded or X-Forwarded-For header returns 403. No remote production readiness is claimed.
+Use the native API directly on loopback. MCP rejects non-loopback peer addresses, non-loopback Host values, Origin, Forwarded and X-Forwarded-* headers. Compose binds published database/API/Web ports to IPv4 loopback; Docker MCP is not supported in this preview. Do not expose any service publicly or forward MCP through a tunnel/reverse proxy. The built-in Web App's Nginx proxy is for REST, not MCP. Local malware, untrusted clients, browser XSS and cloud model providers remain outside this trust boundary.
 
-## Stage 6.2 — single-user REST access
+## Credentials and access
 
-Generate a separate random 64-character hexadecimal token with `python -c "import secrets; print(secrets.token_hex(32))"`. For native Development API, configure `dotnet user-secrets set "RestAuth:Token" "<generated token>" --project JobHunter.AI.Api` and restart. For Compose, set `JOBHUNTER_REST_TOKEN` in the launching shell and recreate the API. Do not publish the token, and avoid sharing Compose config output containing it. Never reuse the MCP token. Missing REST configuration denies REST requests with 503; malformed or identical credentials fail startup. MCP remains separately authenticated.
+| Setting | Purpose | Default / constraints |
+|---|---|---|
+| `Mcp:Enabled` | Enable endpoint | false |
+| `Mcp:Token` | Read bearer | Required if enabled; at least 32 characters; generate 64 hex |
+| `Mcp:WriteToken` | Separate write bearer | Optional; exactly 64 hex, distinct from read and REST |
+| `Mcp:AllowWrites` | Independent mutation switch | false; true requires write credential |
+| `RestAuth:Token` | REST bearer | Separate 64 hex; missing denies REST with 503 |
 
-Open the Web App at http://localhost:5150 and enter the REST token. The REST token is stored in browser localStorage after successful verification and restored only after a new API session check. Sign out removes the stored token and clears the in-memory HTTP client credential; reload retains login when the API accepts the saved token. A 401 invalidates the saved session; temporary connection failures do not delete the saved credential. LocalStorage is readable by same-origin scripts and persists across browser restarts; use a trusted personal browser only, never a shared device or public deployment. To recover from temporary API failure, reload after the API is available. rotate the server token and restart to revoke the credential server-side. This is not an expiring server session or multi-user identity system. Use only trusted local browser and loopback HTTP; do not expose remotely or use a public proxy. XSS or a compromised local process can still access the credential. All existing non-MCP API paths require the token; valid CORS preflight is handled by existing CORS middleware. Clients must send Authorization: Bearer <token>. A missing or wrong token is denied before repositories or AI run.
+Generate each secret independently. Use development User Secrets or environment variables (double underscore for nested keys); never commit credentials. Restart after changes. The REST middleware bypasses MCP and vice versa. Invalid credentials return 401, malformed configured credentials fail startup under the applicable validation rules. MCP checks SHA-256 hashes with fixed-time comparisons and attaches a role and identity per request. Multiple or oversized Authorization headers are rejected. Responses after the local gate are marked no-store. REST and MCP credentials are not interchangeable when configured separately.
 
-Manual checks: anonymous REST request returns 401 (503 if unconfigured); wrong token returns 401; valid token unlocks the Web App and existing operations; reload restores login, Sign out requires token entry again, a rejected saved token is removed; REST token is rejected by MCP. Existing MCP credentials and Inspector behavior remain unchanged. Unit/HTTP tests do not establish browser end-to-end compatibility or remote deployment readiness.
+Read tokens discover four tools; write tokens discover five. The SDK authorization filter and in-tool authenticated writer role check enforce mutation authorization independently of discovery. The write switch must also be enabled. Stateless transport prevents privileges being carried by an MCP session ID. Mutation uses an atomic compare-and-set with one audit row in `ApplicationStatusAudit`; only MCP status changes are audited. Client confirmation is recommended but not enforced by an approval UI. Revoke write credentials by removing them and restarting. See [setup guide](README.md#optional-status-updates).
 
-## Stage 6.3 — MCP read/write authorization
+## REST browser access
 
-- `Mcp:Token` is the existing read credential. Its format is unchanged for backward compatibility.
-- `Mcp:WriteToken` is a separate 64-character hexadecimal credential, not shared with `Mcp:Token` or `RestAuth:Token`. Configure via User Secrets or environment variables, never source files. If malformed or duplicated, MCP startup fails.
-- `Mcp:AllowWrites` is an independent kill switch. Setting it to true without a valid separate write token fails startup. Leave it false except during explicit write usage.
-- The MCP transport authenticates **every** HTTP request (fixed-time SHA-256 comparisons), attaches either the `McpReader` or `McpWriter` role to the request principal, and rejects wrong credentials. The REST middleware still bypasses `/mcp`, while the MCP middleware ignores all other paths.
-- With SDK 2.4.0, `AddAuthorizationFilters()` enforces `[Authorize(Roles = "McpWriter")]` on `update_application_status`; unauthorized callers do not see the tool during discovery and cannot invoke it. The tool also checks the authenticated writer role and `AllowWrites` before it accesses the repository.
-- Streamable HTTP is explicitly stateless; an MCP HTTP session cannot be used to replay or upgrade authorization. `ClaimTypes.NameIdentifier` is distinct for read and write credentials as additional identity separation.
-- Read token clients get four tools; write token clients get five. Possession of the write token is powerful: protect it like a password. No per-user OAuth, approval UI, network exposure, fine-grained scopes, or remote production assurances are added.
+The Web App verifies the REST bearer before storing it in localStorage, and revalidates it on reload. Sign out clears stored and in-memory credentials; 401 invalidates the saved session. Temporary API failure does not delete the credential. LocalStorage is accessible to same-origin scripts and persists across browser restarts. Use a trusted personal browser; rotate the server token and restart to revoke it. This is not an expiring server session or multi-user identity. Compose obtains the REST credential from `JOBHUNTER_REST_TOKEN` in the launching environment; avoid sharing expanded Compose config output.
 
-Acceptance tests must include invalid credential, disabled-write, read-token write denial after writes are enabled, write-token success, stale compare-and-set, one audit row only, REST/MCP credential separation, and no `Mcp-Session-Id` from the API. Integration tests run only against the dedicated `jobhunter_integration` PostgreSQL database.
+## Resource protection
 
-## Stage 6.4 — MCP resource protection
+| Setting / limit | Default | Allowed range |
+|---|---:|---:|
+| `Mcp:Limits:RequestsPerMinute` | 120 | 1–600 |
+| `Mcp:Limits:AnalysisPerMinute` | 12 | 1–120 |
+| `Mcp:Limits:MaxConcurrentRequests` | 8 | 1–32 |
+| `Mcp:Limits:MaxBodyBytes` | 65536 | 1024–262144 |
+| Concurrent MCP ATS calls | 1 | Fixed |
+| Body upload deadline | 10 seconds | Fixed, cooperative |
+| ATS deadline | 45 seconds | Fixed, cooperative |
+| Read-tool typed JSON output | 128 KiB | Fixed |
 
-Local, single-process limits are shared across read and write credentials. All MCP requests passing the local/Host/header gate (including failed authentication) consume one fixed-window request permit. No raw token is used as a partition key. Default: 120 requests/minute, eight concurrent authenticated transport requests, 12 ATS tool calls/minute, one concurrent MCP ATS tool call. No queues. Request/concurrency exhaustion returns HTTP 429 with Retry-After (60 seconds for the rate budget, one second as a concurrency retry hint). ATS exhaustion returns a safe MCP tool error instead; the transport may already be streaming. Cached ATS calls count too; matching still examines at most five candidates. The existing shared REST/MCP analyzer gate is retained, and REST is not subject to these MCP limits.
+Limits are shared across credentials in one process, not distributed or per-user. Requests passing the local gate, including invalid credentials, consume the request budget. Fixed windows allow boundary bursts; restart resets budgets; invalid-token floods can exhaust the local budget. No queues. Transport exhaustion returns HTTP 429 with Retry-After (60 seconds for rate, one second for concurrency). ATS limits return MCP tool errors, including for cached calls. REST is outside MCP limits but shares the existing analyzer gate. Actual POST bytes are counted (including chunked requests); 413 for oversize, 415 for unsupported content encoding, 408 for cooperative upload timeout. JSON-RPC parsing remains with the SDK. Read output is checked before SDK serialization; oversize returns a safe error, not truncated pages. This is not a hard wire-byte or memory allocation cap. Invalid startup limit settings fail when MCP is enabled.
 
-Authenticated MCP POST bodies are limited to 65,536 actual bytes, including chunked transfer; oversized requests return 413, unsupported Content-Encoding returns 415, and a cooperative ten-second upload deadline returns 408. JSON-RPC parsing and errors remain the SDK's responsibility. The middleware does not log bodies or credentials. Existing Kestrel header and transport limits continue to apply. These are not public-network DoS defenses or output-size limits. Fixed windows allow bursts near a boundary; budgets reset on process restart, are shared by trusted local clients, and an invalid-token flood can exhaust the local budget.
+## Untrusted text and data handling
 
-Optional startup configuration (restart required): `Mcp:Limits:RequestsPerMinute` (1–600), `Mcp:Limits:AnalysisPerMinute` (1–120), `Mcp:Limits:MaxConcurrentRequests` (1–32), `Mcp:Limits:MaxBodyBytes` (1024–262144). Invalid values fail startup when MCP is enabled. Do not raise limits without measuring local resource usage. The existing 45-second cooperative analysis deadline and field/page limits remain unchanged.
+Treat job descriptions, company names, URLs, notes and model-generated output as untrusted. Never follow embedded instructions or allow them to authorize a write. The ATS analyzer separates system instructions from JSON-encoded input and uses cache version ats-v4. It does not grant the model tool access. These mitigations do not guarantee model compliance. The local analyzer can run without sending inputs off-device, but third-party MCP clients may send tool results to cloud models. Review provider privacy settings, minimize data and avoid screenshots/logs containing real credentials. The MCP middleware does not log raw request bodies or credentials; universal redaction across all components is not guaranteed. Derived cached ATS data may be personal. Protect database files and backups.
 
+## Acceptance evidence
 
-## Stage 6.5 — security acceptance
+- [x] Maintainer-reported Release build and full 84-test suite, zero skips/failures.
+- [x] Automated read/write separation, disabled writes, stale update, atomic audit, REST isolation and stateless discovery.
+- [x] Automated rate/concurrency budget checks, body-size/encoding rejection, output-size rejection and smaller-page recovery.
+- [x] Synthetic stored instructions cannot grant write access under the read credential; mocked model message separation.
+- [x] Inspector read calls and Copilot four-tool discovery plus actual search invocation (maintainer smoke tests).
+- [ ] Successful current-release live ATS, real-model injection resistance and real-client write confirmation/approval workflow.
+- [ ] Fresh full-install browser login/logout/reload and deployment verification for this release.
+- [ ] Claude Desktop, DeepSeek Harness and ChatGPT compatibility (deferred).
 
-Read-tool typed JSON payloads are checked against a 128 KiB UTF-8 budget before SDK serialization. Oversized results return a safe tool error; no silent truncation or altered pagination. Reduce page size or shorten stored data. This is not a hard wire-byte or allocation cap: the repository and serialization may allocate the full result before checking, and the SDK envelope adds overhead. The fixed-size write result does not need this check.
-
-ATS prompts separate trusted system instructions from JSON-encoded untrusted job/resume data. The shared REST/MCP analyzer is affected; cache algorithm version is bumped to ats-v4 so old prompt results are not reused. No model tool access is added. This reduces injection risk but cannot guarantee model compliance. MCP clients must treat all tool data as untrusted, never follow embedded instructions, and obtain explicit approval for writes; use the read credential by default. Stored text is not censored or rewritten.
-
-Acceptance checklist (mark only after execution):
-- [ ] Release build and full unit/integration suite with zero skips against disposable PostgreSQL.
-- [ ] Read/write separation, disabled writes, compare-and-set and audit, REST token isolation, no session privilege carry.
-- [ ] HTTP body/rate/concurrency controls and safe oversized-output error; smaller page still succeeds.
-- [ ] Synthetic stored prompt injection leaves records/audit unchanged under read credential; verify real model and real client separately.
-- [ ] Verify real client discovery and schema, read calls, explicit approval before any write, and inspect safe logs without sharing credentials.
-- [ ] Verify loopback-only bindings and REST browser login/logout/reload after native API startup.
-
-Mocked model tests establish message separation and server authorization, not real-model resistance or universal secret redaction. No public deployment, OAuth, or multi-tenant security is claimed. Live client checks remain Stage 7; do not mark them passed from automated tests alone.
+No public-network security, OAuth, multi-tenancy, full audit coverage, production secret management, universal prompt-injection resistance or production readiness is claimed. Do not publish a publicly reachable endpoint on the basis of these tests. Report security issues privately to the maintainer without including live secrets or personal data.

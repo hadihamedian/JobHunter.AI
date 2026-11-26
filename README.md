@@ -19,7 +19,7 @@
 
 JobHunter.AI is an end-to-end career management platform built to solve a very practical problem: **generic AI resume tools hallucinate, and generic ATS tools are dumb**. This project takes a hybrid approach — deterministic, rule-based logic where accuracy matters (skill matching, scoring, structural validation) combined with a **local LLM (via Ollama)** orchestrated through **Microsoft.Extensions.AI and tools ** for the parts that genuinely benefit from generative reasoning.
 
-Everything runs **locally by default** — no data ever has to leave your machine, no API keys, no per-token cost. It's both a daily-use tool for managing a job search and a demonstration of applied .NET + Agentic AI architecture: Minimal APIs, Blazor WebAssembly, PostgreSQL, and strict tool invocation pipelines.
+The built-in Web App and Ollama can run locally without a paid model API. Local bearer credentials are required for REST and enabled MCP access. External MCP clients may transmit returned records to their model providers. It's both a daily-use tool for managing a job search and a demonstration of applied .NET + Agentic AI architecture: Minimal APIs, Blazor WebAssembly, PostgreSQL, and strict tool invocation pipelines.
 
 ---
 
@@ -38,13 +38,22 @@ Everything runs **locally by default** — no data ever has to leave your machin
 
 | Module | What it does |
 |---|---|
-| 🧠 **Smart Analyze** | Deterministic resume-to-job-description matching — verifiable skill-gap detection with zero LLM guessing |
+| 🧠 **Smart Analyze** | Deterministic resume-to-job-description matching — verifiable skill-gap detection with deterministic skill checks and model-assisted requirement extraction |
 | 💬 **Career Chat** | Conversational advisor with on-demand access to your career records via tools |
 | 📊 **Applications Dashboard** | Track every application with AI-powered semantic search and direct database query tools |
 | 📄 **Resume Manager** | Store, organize, and version multiple resumes with AI-assisted recommendation |
-| 🎯 **Resume Tailor** | Self-correcting generative rewriter that ensures 100% structural parity with the original resume |
+| 🎯 **Resume Tailor** | Self-correcting generative rewriter that checks structural parity with the original resume |
 | 🗣️ **Interview Prep** | Realistic, role-specific technical and behavioral questions generated directly from job descriptions |
 | 🏦 **Interview Bank** | Filterable, searchable repository of past questions with natural language navigation |
+| **MCP Server (local preview)** | Connect compatible AI clients to saved applications, ATS analysis and optional authorized status updates |
+
+---
+
+## MCP Server — local preview
+
+The existing API exposes an opt-in, stateless Streamable HTTP endpoint at `http://localhost:5065/mcp`. Four read tools are available with a read credential; a separate write credential and explicit opt-in are required for status changes. It shares PostgreSQL and the ATS analyzer with the Web App. No internet job search or automatic application submission is provided.
+
+**Verified client smoke tests:** MCP Inspector and VS Code/GitHub Copilot (read access). See the [MCP setup and tool guide](docs/mcp/README.md), [security model](docs/mcp/security.md) and [release notes](docs/mcp/release-notes.md). Run MCP natively on the host; do not expose the endpoint publicly.
 
 ---
 
@@ -98,7 +107,7 @@ JobHunter.AI decouples deterministic verification from generative reasoning usin
 
 ## 🚀 Getting Started
 
-### Option A — Docker (recommended)
+### Option A — Docker (Web App only)
 
 #### Prerequisites
 
@@ -115,11 +124,13 @@ JobHunter.AI decouples deterministic verification from generative reasoning usin
 git clone https://github.com/hadihamedian/JobHunter.AI.git
 cd JobHunter.AI
 
-# Build and start services (API, Web, PostgreSQL)
+# In Windows CMD, generate a new secret (Python 3 required)
+python -c "import secrets; print(secrets.token_hex(32))"
+set "JOBHUNTER_REST_TOKEN=REPLACE_WITH_GENERATED_TOKEN"
 docker compose up --build -d
 ```
 
-The app will be available at **http://localhost:5150** (or port 80/configured proxy port).
+Open **http://localhost:5150** and enter the REST token. Keep the services on loopback; Docker MCP is not supported in this preview.
 
 ---
 
@@ -131,7 +142,7 @@ The app will be available at **http://localhost:5150** (or port 80/configured pr
 - [PostgreSQL](https://www.postgresql.org/download/)
 - [Ollama](https://ollama.com/download) with `llama3.2:latest`
 
-#### Configuration (`JobHunter.AI.Api/appsettings.json`)
+#### Configuration (local defaults in `JobHunter.AI.Api/appsettings.json`)
 
 ```json
 {
@@ -147,17 +158,25 @@ The app will be available at **http://localhost:5150** (or port 80/configured pr
 
 #### Run
 
-```bash
-# Start API
-cd JobHunter.AI.Api
-dotnet run
+From the repository root, create the `jobassistant` PostgreSQL database (or configure your existing database). Set private connection details through User Secrets, not committed files. Generate a fresh REST token and configure it:
 
-# In another terminal, start Blazor Web
-cd JobHunter.AI.Web
-dotnet run
+```cmd
+python -c "import secrets; print(secrets.token_hex(32))"
+dotnet user-secrets set "RestAuth:Token" "REPLACE_WITH_GENERATED_TOKEN" --project JobHunter.AI.Api
+dotnet run --project JobHunter.AI.Api --launch-profile http
 ```
 
+In another terminal, from the repository root:
+
+```cmd
+dotnet run --project JobHunter.AI.Web --launch-profile http
+```
+
+Open http://localhost:5150 and enter the REST token. For optional MCP configuration, follow the [MCP guide](docs/mcp/README.md).
+
 ## 🧪 Testing
+
+Run `dotnet build JobHunter.AI.slnx -c Release` and `dotnet test JobHunter.AI.slnx -c Release --no-build`. For the full PostgreSQL integration suite, configure the [disposable integration database](docs/mcp/README.md#automated-tests). Without it, integration tests are skipped.
 
 - **Deterministic Tools & Regex**: Table-driven tests in `AtsEvaluationToolsTests` verifying negative lookaround token matching and domain aliases without false positives.
 - **Structure Validation**: `ResumeStructureValidatorTests` ensuring markdown sections, bullet counts, and tech stacks are preserved during tailoring.
@@ -169,6 +188,8 @@ dotnet run
 ```
 JobHunter.AI/
 ├── JobHunter.AI.Api/            # Backend - Minimal API (.NET 10)
+│   ├── Mcp/                     # MCP tools, authentication and resource limits
+│   ├── Security/                # REST bearer authentication
 │   ├── Models/                  # DTOs and contracts
 │   ├── Tools/                  # Tools & Native Tools (Ats, Data, Interview, Career)
 │   ├── Services/                # Business orchestration using IChatClient
