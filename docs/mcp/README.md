@@ -115,3 +115,17 @@ Wait for readiness. Tests use isolated random schemas, cleaned up on normal disp
 ## Compatibility and release status
 
 Maintainer-reported validation: 84 tests passed, zero failures/skips, Release build successful; Inspector read calls and VS Code/GitHub Copilot four-tool discovery and search invocation verified. Successful live ATS with the current release, real-client mutation/approval, real-model injection resistance, Claude Desktop, DeepSeek Harness and ChatGPT are not established by this evidence. See [release notes](release-notes.md). This is a local preview, not a remote production deployment.
+
+## View Local Access Tokens
+
+To view your existing REST and MCP credentials, run the following command from the solution root:
+
+```cmd
+dotnet user-secrets list --project JobHunter.AI.Api
+```
+
+- `RestAuth:Token`: Web application access token.
+- `Mcp:Token`: MCP read access token.
+- `Mcp:WriteToken`: Optional MCP write access token.
+
+**Security:** Never share the command output or commit credentials to source control.
