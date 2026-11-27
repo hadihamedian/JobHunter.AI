@@ -174,6 +174,44 @@ dotnet run --project JobHunter.AI.Web --launch-profile http
 
 Open http://localhost:5150 and enter the REST token. For optional MCP configuration, follow the [MCP guide](docs/mcp/README.md).
 
+## Local demo workspace (optional)
+
+For screenshots and recordings, use a separate local database. In the API's
+`appsettings.Development.json`, merge these settings into the existing JSON:
+
+```json
+{
+  "RestAuth": { "Enabled": false },
+  "Database": { "AutoCreate": true },
+  "Demo": { "SeedData": true },
+  "ConnectionStrings": {
+    "DefaultConnection": "Host=localhost;Database=jobhunter_demo;Username=postgres;Password=postgres"
+  }
+}
+```
+
+Use your actual local PostgreSQL credentials privately (prefer User Secrets for
+passwords). User Secrets and environment variables take precedence over JSON.
+Start PostgreSQL, then the native API and Web App with their `http` launch profiles.
+The PostgreSQL role needs `CREATEDB` or equivalent privileges only if the database
+is missing. A connection to the maintenance database `postgres` is required for
+creation. Existing databases are never dropped or recreated.
+
+Demo seeding requires a local database name ending in `_demo` and empty application,
+resume, interview and status-audit tables. It inserts 30 fictional job records,
+three sample resumes and 20 interview questions in one transaction. Scores are
+illustrative, not computed. A seed-history marker prevents automatic reseeding after
+successful insertion, even if records are later deleted. No real data is copied.
+
+REST bypass is disabled by default and only allowed in native Development with
+loopback requests and Host headers, without forwarded headers. The Web App probes
+`/api/auth/session` and skips login only when the API permits an anonymous session.
+MCP authentication and write protection remain independent. Do not proxy or expose
+this mode. Restart the API and reload the browser after configuration changes.
+Do not commit your demo credentials or use this mode for public deployment.
+To return to normal use, restore the original connection string and set
+`RestAuth:Enabled=true`, `Database:AutoCreate=false`, `Demo:SeedData=false`, then restart.
+
 ## 🧪 Testing
 
 Run `dotnet build JobHunter.AI.slnx -c Release` and `dotnet test JobHunter.AI.slnx -c Release --no-build`. For the full PostgreSQL integration suite, configure the [disposable integration database](docs/mcp/README.md#automated-tests). Without it, integration tests are skipped.

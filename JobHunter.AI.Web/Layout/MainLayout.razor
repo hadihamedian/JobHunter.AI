@@ -28,6 +28,8 @@
                 <span class="nav-icon">✂</span> Resume Tailor
             </NavLink>
         </div>
+        @if (OnSignOut is not null)
+        {
         <div class="nav-section session-section">
             
             <button type="button" class="nav-item session-signout" @onclick="SignOut" title="Sign out">
@@ -37,6 +39,7 @@
                 Sign out
             </button>
         </div>
+        }
     </aside>
 
     <main class="main-content">

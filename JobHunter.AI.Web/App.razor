@@ -11,7 +11,7 @@ else if (!_signedIn)
 {
     <main class="panel" style="max-width:440px;margin:64px auto;padding:24px;">
         <h1>JobHunter.AI</h1>
-        <small style="display:block;opacity:.7;">REST access • Build 6.2.4</small>
+        <small style="display:block;opacity:.7;">REST access • Local session</small>
         <p style="margin:12px 0 24px;">Enter your local REST access token to continue.</p>
         <form @onsubmit="SignInAsync" @onsubmit:preventDefault="true">
             <label for="rest-token" class="form-label">Access token</label>
@@ -23,6 +23,7 @@ else if (!_signedIn)
                 @(_busy ? "Checking..." : "Unlock")
             </button>
         </form>
+        <button type="button" class="nav-item" @onclick="RestoreAsync" disabled="@_busy">Retry connection</button>
         @if (_error is not null)
         {
             <p role="alert" class="error">@_error</p>
@@ -31,7 +32,7 @@ else if (!_signedIn)
 }
 else
 {
-    <CascadingValue Value="@((Func<Task>)SignOutAsync)">
+    <CascadingValue TValue="Func<Task>" Value="@(_anonymous ? (Func<Task>?)null : (Func<Task>)SignOutAsync)">
         <Router AppAssembly="@typeof(App).Assembly">
             <Found Context="routeData">
                 <RouteView RouteData="@routeData" DefaultLayout="@typeof(Layout.MainLayout)" />
@@ -52,6 +53,7 @@ else
     private string? _error;
     private bool _busy;
     private bool _signedIn;
+    private bool _anonymous;
     private bool _restoring = true;
 
     protected override void OnInitialized() => SessionHandler.Unauthorized += OnUnauthorized;
@@ -59,13 +61,38 @@ else
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
+        await RestoreAsync();
+    }
+
+    private async Task RestoreAsync()
+    {
+        _restoring = true;
+        _error = null;
+        _signedIn = false;
+        _anonymous = false;
+        Http.DefaultRequestHeaders.Authorization = null;
         try
         {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            using var response = await Http.GetAsync("/api/auth/session", timeout.Token);
+            if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+            {
+                _anonymous = true;
+                _signedIn = true;
+                return;
+            }
+            if (response.StatusCode != System.Net.HttpStatusCode.Unauthorized)
+            {
+                _error = $"API unavailable or unexpected response ({(int)response.StatusCode}).";
+                return;
+            }
             await using var module = await OpenModuleAsync();
             var token = await module.InvokeAsync<string?>("loadToken");
             if (!string.IsNullOrEmpty(token)) await AuthenticateAsync(token, module, false);
         }
         catch (JSException) { _error = "Browser storage is unavailable. Sign in manually."; }
+        catch (OperationCanceledException) { _error = "API request timed out. Check that the API is running."; }
+        catch (HttpRequestException) { _error = "Cannot connect to the API. Check that it is running."; }
         finally { _restoring = false; StateHasChanged(); }
     }
 

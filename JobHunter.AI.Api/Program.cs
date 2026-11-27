@@ -274,10 +274,12 @@ interviews.MapDelete("/application/{applicationId:guid}", async (Guid applicatio
     return Results.NoContent();
 });
 
+await LocalDatabaseSetup.EnsureDatabaseAsync(connectionString, app.Configuration, app.Environment);
 await ResumeRepository.InitDbAsync(dataSource);
 await InterviewRepository.InitDbAsync(dataSource);
 await ApplicationRepository.InitDbAsync(dataSource);
 await app.Services.GetRequiredService<AtsAnalysisCache>().InitializeAsync();
+await LocalDatabaseSetup.SeedAsync(dataSource, connectionString, app.Configuration, app.Environment);
 
 app.MapJobHunterMcp();
 app.Run();
