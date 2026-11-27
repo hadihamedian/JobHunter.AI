@@ -23,10 +23,14 @@ else if (!_signedIn)
                 @(_busy ? "Checking..." : "Unlock")
             </button>
         </form>
-        <button type="button" class="nav-item" @onclick="RestoreAsync" disabled="@_busy">Retry connection</button>
         @if (_error is not null)
         {
             <p role="alert" class="error">@_error</p>
+        }
+        @if (_connectionFailed)
+        {
+            <button type="button" class="btn-analyze" style="margin-top:12px;"
+                    @onclick="RestoreAsync" disabled="@_busy">Retry connection</button>
         }
     </main>
 }
@@ -52,6 +56,7 @@ else
     private ElementReference _tokenInput;
     private string? _error;
     private bool _busy;
+    private bool _connectionFailed;
     private bool _signedIn;
     private bool _anonymous;
     private bool _restoring = true;
@@ -68,6 +73,7 @@ else
     {
         _restoring = true;
         _error = null;
+        _connectionFailed = false;
         _signedIn = false;
         _anonymous = false;
         Http.DefaultRequestHeaders.Authorization = null;
@@ -83,6 +89,7 @@ else
             }
             if (response.StatusCode != System.Net.HttpStatusCode.Unauthorized)
             {
+                _connectionFailed = true;
                 _error = $"API unavailable or unexpected response ({(int)response.StatusCode}).";
                 return;
             }
@@ -91,8 +98,8 @@ else
             if (!string.IsNullOrEmpty(token)) await AuthenticateAsync(token, module, false);
         }
         catch (JSException) { _error = "Browser storage is unavailable. Sign in manually."; }
-        catch (OperationCanceledException) { _error = "API request timed out. Check that the API is running."; }
-        catch (HttpRequestException) { _error = "Cannot connect to the API. Check that it is running."; }
+        catch (OperationCanceledException) { _connectionFailed = true; _error = "API request timed out. Check that the API is running."; }
+        catch (HttpRequestException) { _connectionFailed = true; _error = "Cannot connect to the API. Check that it is running."; }
         finally { _restoring = false; StateHasChanged(); }
     }
 
@@ -104,6 +111,7 @@ else
         if (_busy) return;
         _busy = true;
         _error = null;
+        _connectionFailed = false;
         try
         {
             await using var module = await OpenModuleAsync();
@@ -137,10 +145,14 @@ else
                 await module.InvokeVoidAsync("forgetToken");
                 _error = "Access denied. Enter your current access token.";
             }
-            else _error = $"API unavailable or unexpected response ({(int)response.StatusCode}).";
+            else
+            {
+                _connectionFailed = true;
+                _error = $"API unavailable or unexpected response ({(int)response.StatusCode}).";
+            }
         }
-        catch (OperationCanceledException) { _error = "API request timed out. Check that the API is running."; }
-        catch (HttpRequestException) { _error = "Cannot connect to the API. Check that it is running."; }
+        catch (OperationCanceledException) { _connectionFailed = true; _error = "API request timed out. Check that the API is running."; }
+        catch (HttpRequestException) { _connectionFailed = true; _error = "Cannot connect to the API. Check that it is running."; }
         finally { if (!_signedIn) Http.DefaultRequestHeaders.Authorization = null; }
     }
 
@@ -157,6 +169,7 @@ else
         Http.DefaultRequestHeaders.Authorization = null;
         _signedIn = false;
         _error = message;
+        _connectionFailed = false;
         try
         {
             await using var module = await OpenModuleAsync();
